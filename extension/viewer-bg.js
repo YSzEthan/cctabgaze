@@ -3,6 +3,7 @@
 const VIEWER_URL = chrome.runtime.getURL('viewer.html');
 const STATE_TEXT = { running: '⌛ AI 執行中', permission: '🔔 AI 等待授權', done: '✅ AI 已完成', idle: 'AI 閒置' };
 const END_TEXT = { 'ai-ended': 'AI 已結束', replaced: '已被另一台 viewer 取代', 'host-canceled': 'host 端取消了連線' }; // host 結束連線的原因，這幾種都不自動重連
+const ERROR_TEXT = { 'ai-idle': 'AI 目前沒有在運作（host 沒有 Claude 分頁群組）', 'no-net': 'host 沒有符合允許網段的位址，無法連線' };
 let vs = null; // { id, myId, focus, retried, ended, timer, opening }
 let lastStatus = '';
 const vStatus = (t) => { if (t !== lastStatus) { lastStatus = t; chrome.storage.local.set({ cg_status: t }); } };
@@ -18,11 +19,11 @@ async function toVoff(m) {
 async function vConnect(auto = false) {
   const prev = vs;
   clearTimeout(prev?.timer);
-  let { deviceId } = await chrome.storage.local.get('deviceId');
+  let { deviceId, nets } = await chrome.storage.local.get(['deviceId', 'nets']);
   if (!deviceId) { deviceId = crypto.randomUUID(); await chrome.storage.local.set({ deviceId }); }
   const s = vs = { id: crypto.randomUUID(), myId: deviceId, focus: !auto, retried: auto && !!prev?.retried, ended: false, timer: null, opening: null };
   vStatus('連線中…（約需 10 秒）');
-  await toVoff({ type: 'start', id: s.id });
+  await toVoff({ type: 'start', id: s.id, nets });
   if (vs === s) s.timer = setTimeout(() => vFail('host 離線或未回應（等了 20 秒）'), 20000);
 }
 
@@ -51,20 +52,21 @@ chrome.storage.onChanged.addListener((ch, area) => {
   if (!r || !vs || r.to !== vs.myId || r.id !== vs.id) return;
   clearTimeout(vs.timer);
   slog('[viewer] 收到 host 回應', r.error || 'answer');
-  if (r.error) return vFail(r.error === 'ai-idle' ? 'AI 目前沒有在運作（host 沒有 Claude 分頁群組）' : 'host 無法建立連線');
+  if (r.error) return vFail(ERROR_TEXT[r.error] || 'host 無法建立連線');
   const s = vs;
   s.timer = setTimeout(() => vFail('host 回應了，但連線建立失敗（等了 15 秒）'), 15000); // 回應之後另起一段，不再沿用 20 秒
   toVoff({ type: 'answer', id: s.id, sdp: r.sdp });
 });
 
-const FROM_VOFF = new Set(['v-offer', 'v-connected', 'v-closed', 'v-pagegone']);
+const FROM_VOFF = new Set(['v-offer', 'v-connected', 'v-closed', 'v-pagegone', 'v-netfail']);
 chrome.runtime.onMessage.addListener((m) => {
   if (m.target === 'sw' && m.type === 'v-closed' && !vs) vStatus('連線中斷，請從插件圖示按 Viewer 重試'); // 背景程式重啟後 vs 已遺失，至少讓狀態文字更新
   if (m.target === 'sw' && FROM_VOFF.has(m.type) && m.id !== vs?.id) return; // 不是目前這條連線的訊息
   if (m.target === 'sw' && m.type === 'v-pagegone') return vStop('檢視頁面已關閉，連線已停止');
+  if (m.target === 'sw' && m.type === 'v-netfail') return vStop(`連線位址不在允許網段內，已關閉（${m.detail}）`); // 位址不合是設定問題，重試也一樣，不自動重連
   if (m.target === 'sw' && m.type === 'v-connect') vConnect().catch((e) => vFail('錯誤：' + (e.message || e)));
   if (m.target === 'sw' && m.type === 'v-offer' && vs) {
-    if (!m.kept) return vFail('這台沒有 Tailscale 位址，無法連線');
+    if (!m.kept) return vFail('這台沒有符合允許網段的位址，無法連線');
     chrome.storage.sync.set({ [REQ]: { id: vs.id, from: vs.myId, t: Date.now(), sdp: m.sdp } }).then(() => slog('[viewer] 連線請求已寫入 sync'));
   }
   if (m.target === 'sw' && m.type === 'v-connected' && vs) {

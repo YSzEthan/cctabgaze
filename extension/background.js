@@ -229,9 +229,10 @@ async function onRequest(req) {
   slog('收到連線請求', req.id.slice(0, 8), '，延遲約', age, 'ms');
   if (!(await findClaudeGroups()).length) { await reply(req, { error: 'ai-idle' }); return slog('沒有 Claude 分頁群組，拒絕連線'); }
   await endSession('replaced');
+  const { nets } = await chrome.storage.local.get('nets'); // 允許的網段（各機器本機設定，不經同步）
   session = { req, attachedTabId: null, lastData: null, pending: null, pendingAt: 0, seq: 0, pendingSeq: 0, lastStepAt: 0, lastInputAt: 0, view: null, pinnedTabId: null, cur: null, tabs: [], lastTabs: null };
   for (let i = 0; i < 5; i++) {
-    try { await ensureOffscreen(); await chrome.runtime.sendMessage({ target: 'offscreen', type: 'offer', sdp: req.sdp, id: req.id }); return; } // 每輪都確認文件還在（它可能剛好自己關掉）
+    try { await ensureOffscreen(); await chrome.runtime.sendMessage({ target: 'offscreen', type: 'offer', sdp: req.sdp, id: req.id, nets }); return; } // 每輪都確認文件還在（它可能剛好自己關掉）
     catch { await new Promise((r) => setTimeout(r, 300)); }
   }
   slog('offscreen 沒有回應');
@@ -252,7 +253,7 @@ chrome.runtime.onMessage.addListener((m) => {
   if (m.type.startsWith('v-') || !session || m.id !== session.req.id) return; // 其餘一律要帶目前這條連線的編號，viewer 端的 v-* 由 viewer-bg.js 處理
   if (m.type === 'input') (m.ev?.type === 'nav' || m.ev?.type === 'tab' ? control : input)(m.ev);
   if (m.type === 'answer') reply(session.req, { sdp: m.sdp }).then(() => slog('answer 已寫入 sync'));
-  if (m.type === 'answer-failed') { reply(session.req, { error: 'failed' }); endSession('answer-failed'); } // 不讓 viewer 乾等 20 秒
+  if (m.type === 'answer-failed') { reply(session.req, { error: m.reason || 'failed' }); endSession('answer-failed'); } // 不讓 viewer 乾等 20 秒
   if (m.type === 'open') { slog('DataChannel 開啟，開始傳畫面'); schedule(0); }
   if (m.type === 'ready' && m.seq === session.pendingSeq && session.pending != null) { // 這張確認送達，才算「已送出的最後一張」
     session.lastData = session.pending; session.pending = null;

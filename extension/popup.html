@@ -14,6 +14,12 @@
   #status { margin:10px 0 0; min-height:1.4em; word-break:break-all; }
   #show { width:100%; margin-top:6px; }
   #log { margin:8px 0 0; max-height:240px; overflow:auto; white-space:pre-wrap; word-break:break-all; font:11px ui-monospace, monospace; }
+  details { margin-top:10px; font-size:12px; }
+  summary { cursor:pointer; color:var(--mute); }
+  #nets { width:100%; box-sizing:border-box; margin-top:6px; font:12px ui-monospace, monospace; }
+  #netsrow { display:flex; gap:8px; align-items:center; margin-top:6px; }
+  #netsrow button { flex:none; padding:4px 12px; }
+  #netsmsg { color:var(--mute); }
   button.on { background:var(--on); color:#fff; border:1px solid var(--on); border-radius:4px; }
 </style>
 </head>
@@ -24,6 +30,13 @@
 <p id="status"></p>
 <button id="show" hidden>顯示畫面</button>
 <pre id="log" hidden></pre>
+<details>
+  <summary>允許的網段</summary>
+  <p style="margin:6px 0 0;color:var(--mute)">連線只接受這些網段內的位址，一行一個（例如 100.64.0.0/10）。留空就還原預設。<b>兩台都要各設一次</b>，下次連線生效。</p>
+  <textarea id="nets" rows="4" spellcheck="false" autocomplete="off"></textarea>
+  <div id="netsrow"><button id="netssave">儲存</button><span id="netsmsg"></span></div>
+</details>
+<script src="rtc.js"></script>
 <script src="popup.js"></script>
 </body>
 </html>

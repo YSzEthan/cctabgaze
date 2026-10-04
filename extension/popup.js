@@ -41,3 +41,14 @@ $('showlog').onclick = async () => {
   $('log').hidden = !$('log').hidden;
 };
 render();
+
+// ---- 允許的網段：存在這台的 storage.local，不同步（否則拿到帳號的人能自己改寬）----
+chrome.storage.local.get('nets').then(({ nets }) => { $('nets').value = (Array.isArray(nets) && nets.length ? nets : DEFAULT_NETS).join('\n'); });
+$('netssave').onclick = async () => {
+  const lines = $('nets').value.split('\n').map((l) => l.trim());
+  const { nets, errors } = parseNets(lines);
+  if (errors.length) { $('netsmsg').textContent = '第 ' + errors.map((e) => e.line).join('、') + ' 行格式不正確，未儲存'; return; }
+  if (!nets.length) { await chrome.storage.local.remove('nets'); $('nets').value = DEFAULT_NETS.join('\n'); $('netsmsg').textContent = '已還原預設'; return; }
+  await chrome.storage.local.set({ nets: lines.filter(Boolean) });
+  $('netsmsg').textContent = '已儲存，下次連線生效';
+};

@@ -2,7 +2,7 @@
 // 每條連線一個物件 c，所有回呼只認「自己是不是目前這條」：被取代的連線不會再發任何訊息、也不會動到新連線
 const raw = (m) => chrome.runtime.sendMessage({ target: 'sw', ...m }).catch(() => {});
 const log = (...a) => raw({ type: 'log', line: a.join(' ') });
-let cur = null; // { id, pc, ch, dropTimer, dead }
+let cur = null; // { id, pc, ch, dropTimer, dead, nets, verified, opened }
 
 const send = (c, m) => { if (c === cur) raw({ ...m, id: c.id }); }; // 上行訊息一律帶連線編號
 function die(c) { // 連線結束的唯一出口，只通知一次
@@ -20,17 +20,32 @@ function closeConn(c) {
   c.pc.close();
 }
 
+// 連上後檢查實際選用的兩端位址；通過才開始傳畫面與收輸入。選用的 pair 之後若換了也重查，不通過就收線
+async function verifyConn(c) {
+  const r = await checkPair(c.pc, c.nets);
+  if (c !== cur || c.dead) return;
+  log('選用 pair:', r.local, '→', r.remote, r.ok ? '' : '（不在允許網段內，關閉連線）');
+  if (!r.ok) return die(c);
+  c.verified = true;
+  tryOpen(c);
+}
+function tryOpen(c) {
+  if (!c.verified || c.opened || c.ch?.readyState !== 'open') return;
+  c.opened = true;
+  send(c, { type: 'open' });
+}
+
 async function answer(m) {
   if (cur) closeConn(cur);
   const p = new RTCPeerConnection({ iceServers: [] });
-  const c = cur = { id: m.id, pc: p, ch: null, dropTimer: null, dead: false };
+  const c = cur = { id: m.id, pc: p, ch: null, dropTimer: null, dead: false, nets: netsOrDefault(m.nets), verified: false, opened: false };
   p.onconnectionstatechange = async () => {
     if (c !== cur) return;
     log('connection', p.connectionState);
     clearTimeout(c.dropTimer);
     if (p.connectionState === 'connected') {
-      const stats = await p.getStats();
-      stats.forEach((r) => { if (r.type === 'transport' && r.selectedCandidatePairId) { const pr = stats.get(r.selectedCandidatePairId); const l = stats.get(pr.localCandidateId), x = stats.get(pr.remoteCandidateId); log('選用 pair:', l.address, '→', x.address); } });
+      if (!c.pairWatched) { c.pairWatched = true; p.sctp?.transport?.iceTransport?.addEventListener('selectedcandidatepairchange', () => verifyConn(c)); }
+      verifyConn(c);
     }
     if (['failed', 'closed'].includes(p.connectionState)) die(c);
     if (p.connectionState === 'disconnected') c.dropTimer = setTimeout(() => { if (p.connectionState === 'disconnected') die(c); }, 10000);
@@ -40,21 +55,23 @@ async function answer(m) {
     ch.binaryType = 'arraybuffer';
     ch.bufferedAmountLowThreshold = 0;
     ch.onmessage = (e) => { // 只收短字串並解析；真正的檢查在背景程式的 input()
-      if (typeof e.data !== 'string' || e.data.length > 4096) return;
+      if (!c.verified || typeof e.data !== 'string' || e.data.length > 4096) return;
       try { send(c, { type: 'input', ev: JSON.parse(e.data) }); } catch {}
     };
     ch.onclose = () => die(c);
-    const open = () => send(c, { type: 'open' });
-    if (ch.readyState === 'open') open(); else ch.onopen = open;
+    ch.onopen = () => tryOpen(c);
+    tryOpen(c);
   };
-  const offer = keepTailscaleOnly(m.sdp);
-  log('offer 保留的 Tailscale candidate 數:', offer.kept);
+  const offer = keepAllowed(m.sdp, c.nets);
+  log('offer 保留的允許網段 candidate 數:', offer.kept);
+  if (!offer.kept) return send(c, { type: 'answer-failed', reason: 'no-net' });
   await p.setRemoteDescription({ type: 'offer', sdp: offer.sdp });
   await p.setLocalDescription(await p.createAnswer());
   await gathered(p);
   if (c !== cur) return; // 等待期間已被新連線取代
-  const ans = keepTailscaleOnly(p.localDescription.sdp);
-  log('answer 保留的 Tailscale candidate 數:', ans.kept);
+  const ans = keepAllowed(p.localDescription.sdp, c.nets);
+  log('answer 保留的允許網段 candidate 數:', ans.kept);
+  if (!ans.kept) return send(c, { type: 'answer-failed', reason: 'no-net' });
   send(c, { type: 'answer', sdp: ans.sdp });
 }
 

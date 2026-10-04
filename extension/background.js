@@ -2,7 +2,7 @@
 // chrome.debugger 只用 attach / detach / sendCommand，指令只有 Page.captureScreenshot 與 input() 裡固定的三種 Input.*；
 // 分頁控制（網址、上一頁、切換、開啟、關閉）只在 control() 裡，且只作用在 Claude 分頁群組內的分頁
 const REQ = 'cg_req', RES = 'cg_res';
-const MIN_INTERVAL = 500, FAST_INTERVAL = 100, INPUT_BOOST = 2000, FALLBACK = 3000, SHOT_TIMEOUT = 5000, REQ_TTL = 60000;
+const MIN_INTERVAL = 500, FAST_INTERVAL = 100, INPUT_BOOST = 2000, FALLBACK = 3000, PENDING_TTL = 10000, SHOT_TIMEOUT = 5000, REQ_TTL = 60000;
 const AI_TITLES = new Set(['Claude', 'Claude (MCP)']);
 const PREFIX = /^(⌛|🔔|✅)\s*/;
 const STATES = { '⌛': 'running', '🔔': 'permission', '✅': 'done' };
@@ -52,7 +52,7 @@ function sendTabs(s, tabs, cur) {
 }
 
 // ---- 連線階段 ----
-let session = null; // { req, attachedTabId, lastData, lastStepAt, lastInputAt, view, pinnedTabId(null=自動跟隨 AI), cur(這輪選中的分頁), tabs, lastTabs }
+let session = null; // { req, attachedTabId, lastData(已確認送達的最後一張), pending(送出但還沒確認的畫面), pendingAt, seq, pendingSeq, lastStepAt, lastInputAt, view, pinnedTabId(null=自動跟隨 AI), cur(這輪選中的分頁), tabs, lastTabs }
 let timer = null;
 const toOff = (m, s = session) => chrome.runtime.sendMessage({ target: 'offscreen', id: s?.req.id, ...m }).catch(() => {}); // 帶連線編號，offscreen 只認目前那條
 
@@ -61,7 +61,7 @@ async function ensureOffscreen() {
   if (!ctx.length) await chrome.offscreen.createDocument({ url: 'offscreen.html', reasons: ['WEB_RTC'], justification: '與另一台電腦的 Chrome 建立 WebRTC 連線傳送畫面' });
 }
 
-const forgetTab = (s) => { s.attachedTabId = null; s.lastData = null; };
+const forgetTab = (s) => { s.attachedTabId = null; s.lastData = null; s.pending = null; };
 
 async function release(s) {
   if (s.attachedTabId == null) return;
@@ -118,10 +118,15 @@ async function stepOnce(s) {
         if (session !== s) return release(s); // attach 的空窗期間連線已結束，不能留下沒人管的 debugger
       }
       const state = stateOf((groups.find((g) => g.id === tab.groupId) || groups[0]).title);
-      const data = await shot(tab.id);
-      if (session !== s) return;
-      if (data === s.lastData) toOff({ type: 'ctl', msg: { type: 'same', state } }, s);
-      else { s.lastData = data; sentFrame = true; toOff({ type: 'frame', b64: data, state, tabId: tab.id, ts: Date.now() }, s); }
+      if (s.pending == null || Date.now() - s.pendingAt >= PENDING_TTL) { // 上一張還沒確認送完就不截新的；超過 PENDING_TTL 視為遺失，重送
+        const data = await shot(tab.id);
+        if (session !== s) return;
+        if (data === s.lastData) toOff({ type: 'ctl', msg: { type: 'same', state } }, s);
+        else {
+          s.pending = data; s.pendingAt = Date.now(); s.pendingSeq = ++s.seq; sentFrame = true;
+          toOff({ type: 'frame', b64: data, state, tabId: tab.id, ts: Date.now(), seq: s.seq }, s);
+        }
+      }
     }
   } catch (e) {
     toOff({ type: 'ctl', msg: { type: 'error', message: String(e.message || e) } }, s);
@@ -221,7 +226,7 @@ async function onRequest(req) {
   slog('收到連線請求', req.id.slice(0, 8), '，延遲約', age, 'ms');
   if (!(await findClaudeGroups()).length) { await reply(req, { error: 'ai-idle' }); return slog('沒有 Claude 分頁群組，拒絕連線'); }
   await endSession('replaced');
-  session = { req, attachedTabId: null, lastData: null, lastStepAt: 0, lastInputAt: 0, view: null, pinnedTabId: null, cur: null, tabs: [], lastTabs: null };
+  session = { req, attachedTabId: null, lastData: null, pending: null, pendingAt: 0, seq: 0, pendingSeq: 0, lastStepAt: 0, lastInputAt: 0, view: null, pinnedTabId: null, cur: null, tabs: [], lastTabs: null };
   await ensureOffscreen();
   for (let i = 0; i < 5; i++) {
     try { await chrome.runtime.sendMessage({ target: 'offscreen', type: 'offer', sdp: req.sdp, id: req.id }); return; }
@@ -245,7 +250,10 @@ chrome.runtime.onMessage.addListener((m) => {
   if (m.type === 'input') (m.ev?.type === 'nav' || m.ev?.type === 'tab' ? control : input)(m.ev);
   if (m.type === 'answer') reply(session.req, { sdp: m.sdp }).then(() => slog('answer 已寫入 sync'));
   if (m.type === 'open') { slog('DataChannel 開啟，開始傳畫面'); schedule(0); }
-  if (m.type === 'ready') schedule(fastGap(session)); // ready 只會在送出畫面後出現
+  if (m.type === 'ready' && m.seq === session.pendingSeq && session.pending != null) { // 這張確認送達，才算「已送出的最後一張」
+    session.lastData = session.pending; session.pending = null;
+    schedule(fastGap(session));
+  }
   if (m.type === 'closed') endSession('viewer-left');
 });
 

@@ -2,7 +2,7 @@
 // 每條連線一個物件 c，所有回呼只認「自己是不是目前這條」：被取代的連線不會再發任何訊息、也不會動到新連線
 const raw = (m) => chrome.runtime.sendMessage({ target: 'sw', ...m }).catch(() => {});
 const log = (...a) => raw({ type: 'log', line: a.join(' ') });
-let cur = null; // { id, pc, ch, dropTimer, readyTimer, dead }
+let cur = null; // { id, pc, ch, dropTimer, dead }
 
 const send = (c, m) => { if (c === cur) raw({ ...m, id: c.id }); }; // 上行訊息一律帶連線編號
 function die(c) { // 連線結束的唯一出口，只通知一次
@@ -11,7 +11,7 @@ function die(c) { // 連線結束的唯一出口，只通知一次
   send(c, { type: 'closed' });
 }
 function closeConn(c) {
-  clearTimeout(c.dropTimer); clearTimeout(c.readyTimer);
+  clearTimeout(c.dropTimer);
   c.pc.onconnectionstatechange = null;
   if (c.ch) { c.ch.onclose = null; c.ch.onbufferedamountlow = null; }
   c.pc.close();
@@ -20,7 +20,7 @@ function closeConn(c) {
 async function answer(m) {
   if (cur) closeConn(cur);
   const p = new RTCPeerConnection({ iceServers: [] });
-  const c = cur = { id: m.id, pc: p, ch: null, dropTimer: null, readyTimer: null, dead: false };
+  const c = cur = { id: m.id, pc: p, ch: null, dropTimer: null, dead: false };
   p.onconnectionstatechange = async () => {
     if (c !== cur) return;
     log('connection', p.connectionState);
@@ -55,16 +55,14 @@ async function answer(m) {
   send(c, { type: 'answer', sdp: ans.sdp });
 }
 
-// 一張畫面 = 一筆標頭 + 若干二進位區塊；等待送完才通知背景程式截下一張
+// 一張畫面 = 一筆標頭 + 若干二進位區塊；緩衝清空才通知背景程式（帶畫面序號），這是唯一的背壓機制，沒有備援計時器
 function sendFrame(c, m) {
   const u = Uint8Array.from(atob(m.b64), (x) => x.charCodeAt(0));
   const CH = Math.min(60000, c.pc.sctp?.maxMessageSize || 60000);
   c.ch.send(JSON.stringify({ type: 'h', chunks: Math.ceil(u.length / CH), state: m.state, tabId: m.tabId, ts: m.ts }));
   for (let i = 0; i < u.length; i += CH) c.ch.send(u.subarray(i, i + CH));
-  const done = () => { clearTimeout(c.readyTimer); c.ch.onbufferedamountlow = null; send(c, { type: 'ready' }); };
-  clearTimeout(c.readyTimer);
+  const done = () => { c.ch.onbufferedamountlow = null; send(c, { type: 'ready', seq: m.seq }); };
   c.ch.onbufferedamountlow = done;
-  c.readyTimer = setTimeout(done, 3000);
   if (c.ch.bufferedAmount === 0) done();
 }
 

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>cctabgaze</title>
+<style>
+  :root { --bg:#fff; --fg:#222; --mute:#666; --on:#1a73e8; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#222; --fg:#eee; --mute:#aaa; } }
+  body { width:320px; margin:0; padding:12px; background:var(--bg); color:var(--fg); font:14px system-ui, sans-serif; }
+  h1 { margin:0 0 8px; font-size:15px; }
+  #hint { margin:0 0 10px; color:var(--mute); font-size:12px; }
+  .row { display:flex; gap:8px; }
+  button { flex:1; font:inherit; padding:6px 0; cursor:pointer; }
+  #log { margin:8px 0 0; max-height:240px; overflow:auto; white-space:pre-wrap; word-break:break-all; font:11px ui-monospace, monospace; }
+  button.on { background:var(--on); color:#fff; border:1px solid var(--on); border-radius:4px; }
+</style>
+</head>
+<body>
+<h1>cctabgaze</h1>
+<p id="hint"></p>
+<div class="row"><button id="host">Host</button><button id="viewer">Viewer</button><button id="showlog">紀錄</button></div>
+<pre id="log" hidden></pre>
+<script src="popup.js"></script>
+</body>
+</html>

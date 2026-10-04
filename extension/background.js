@@ -6,8 +6,6 @@ const AI_TITLES = new Set(['Claude', 'Claude (MCP)']);
 const PREFIX = /^(⌛|🔔|✅)\s*/;
 const STATES = { '⌛': 'running', '🔔': 'permission', '✅': 'done' };
 
-chrome.action.onClicked.addListener(() => chrome.tabs.create({ url: chrome.runtime.getURL('viewer.html') }));
-
 // ---- 診斷紀錄（viewer 頁面可顯示）----
 let q = Promise.resolve();
 const slog = (...a) => { q = q.then(async () => {
@@ -52,14 +50,16 @@ async function ensureOffscreen() {
   if (!ctx.length) await chrome.offscreen.createDocument({ url: 'offscreen.html', reasons: ['WEB_RTC'], justification: '與另一台電腦的 Chrome 建立 WebRTC 連線傳送畫面' });
 }
 
+const forgetTab = (s) => { s.attachedTabId = null; s.lastData = null; };
+
 async function release() {
-  if (!session || session.attachedTabId == null) return;
+  if (session?.attachedTabId == null) return;
   const t = session.attachedTabId;
-  session.attachedTabId = null; session.lastData = null;
+  forgetTab(session);
   try { await chrome.debugger.detach({ tabId: t }); } catch {}
 }
 const fastGap = (s) => Math.max(0, FAST_INTERVAL - (Date.now() - s.lastStepAt));
-chrome.debugger.onDetach.addListener((src) => { if (session && src.tabId === session.attachedTabId) { session.attachedTabId = null; session.lastData = null; } });
+chrome.debugger.onDetach.addListener((src) => { if (src.tabId === session?.attachedTabId) forgetTab(session); });
 
 async function endSession(reason) {
   const s = session;
@@ -108,7 +108,7 @@ async function step() {
 const reply = (req, body) => chrome.storage.sync.set({ [RES]: { to: req.from, id: req.id, t: Date.now(), ...body } });
 
 async function onRequest(req) {
-  const { role, deviceId } = await chrome.storage.local.get(['role', 'deviceId']);
+  const { role = 'host', deviceId } = await chrome.storage.local.get(['role', 'deviceId']);
   if (role !== 'host' || req.from === deviceId) return;
   const age = Date.now() - req.t;
   if (age > REQ_TTL) return slog('忽略過期的請求，已過', age, 'ms');
@@ -125,7 +125,7 @@ async function onRequest(req) {
 }
 
 chrome.storage.onChanged.addListener((ch, area) => {
-  const req = area === 'sync' && ch[REQ] && ch[REQ].newValue;
+  const req = area === 'sync' && ch[REQ]?.newValue;
   if (req) onRequest(req);
 });
 

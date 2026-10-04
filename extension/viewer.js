@@ -13,7 +13,7 @@ const setStatus = (t) => { $('status').textContent = t; };
 const idle = (t) => { setStatus(t); $('connect').disabled = false; }; // 顯示狀態並允許重新連線
 
 async function renderRole() {
-  const { role } = await chrome.storage.local.get('role');
+  const { role = 'host' } = await chrome.storage.local.get('role');
   $('role').textContent = ROLE_TEXT[role] || '尚未設定角色';
   $('connect').hidden = role !== 'viewer';
 }
@@ -73,7 +73,7 @@ async function connect(auto = false) {
 }
 
 async function onRes(ch, area) {
-  const r = area === 'sync' && ch[RES] && ch[RES].newValue;
+  const r = area === 'sync' && ch[RES]?.newValue;
   if (!r || r.to !== myId || r.id !== curId) return;
   clearTimeout(timeoutT);
   dlog('收到 host 回應', r.error || 'answer');

@@ -12,7 +12,8 @@
     "debugger"
   ],
   "action": {
-    "default_title": "開啟 cctabgaze"
+    "default_title": "cctabgaze",
+    "default_popup": "popup.html"
   },
   "background": {
     "service_worker": "background.js"

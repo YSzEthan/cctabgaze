@@ -38,9 +38,8 @@ async function answer(m) {
 
 // 一張畫面 = 一筆標頭 + 若干二進位區塊；等待送完才通知背景程式截下一張
 function sendFrame(m) {
-  const bin = atob(m.b64), u = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
-  const CH = Math.min(60000, (pc.sctp && pc.sctp.maxMessageSize) || 60000);
+  const u = Uint8Array.from(atob(m.b64), (c) => c.charCodeAt(0));
+  const CH = Math.min(60000, pc.sctp?.maxMessageSize || 60000);
   ch.send(JSON.stringify({ type: 'h', chunks: Math.ceil(u.length / CH), title: m.title, url: m.url, state: m.state, tabId: m.tabId, ts: m.ts }));
   for (let i = 0; i < u.length; i += CH) ch.send(u.subarray(i, i + CH));
   const done = () => { clearTimeout(readyTimer); ch.onbufferedamountlow = null; send({ type: 'ready' }); };

@@ -1,0 +1,8 @@
+{
+  "manifest_version": 3,
+  "name": "cctabgaze",
+  "version": "0.1.0",
+  "description": "把 AI 正在操作的分頁畫面單向送給本機轉接程式（只看不動）",
+  "permissions": ["debugger", "tabs", "alarms"],
+  "background": { "service_worker": "background.js" }
+}

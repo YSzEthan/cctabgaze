@@ -21,7 +21,10 @@ async function answer(m) {
     ch = e.channel;
     ch.binaryType = 'arraybuffer';
     ch.bufferedAmountLowThreshold = 0;
-    ch.onmessage = () => {}; // viewer 送來的任何訊息一律丟棄
+    ch.onmessage = (e) => { // 只收短字串並解析；真正的檢查在背景程式的 input()
+      if (typeof e.data !== 'string' || e.data.length > 4096) return;
+      try { send({ type: 'input', ev: JSON.parse(e.data) }); } catch {}
+    };
     ch.onclose = () => send({ type: 'closed' });
     const open = () => send({ type: 'open' });
     if (ch.readyState === 'open') open(); else ch.onopen = open;

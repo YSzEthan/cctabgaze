@@ -1,5 +1,6 @@
-// 檢視頁面：只負責顯示。連線在 offscreen 跑，第一張畫面到了背景程式才開這個分頁
+// 檢視頁面：顯示畫面，並把這裡的滑鼠鍵盤事件經 offscreen 送給 host。連線在 offscreen 跑，第一張畫面到了背景程式才開這個分頁
 const $ = (id) => document.getElementById(id);
+let curTab = null; // 目前畫面屬於 host 的哪個分頁；輸入要帶上它，host 發現已經換分頁就丟棄
 let lastFrameAt = 0, mode = 'wait', minLat = Infinity, extraLat = 0, frameTimes = [];
 const fps = () => { const now = Date.now(); frameTimes = frameTimes.filter((t) => now - t < 5000); return (frameTimes.length / 5).toFixed(1); };
 
@@ -12,13 +13,14 @@ function onMsg(m) {
   if (m.type === 'frame') {
     $('img').src = m.src; $('img').hidden = false; $('msg').hidden = true;
     $('title').textContent = m.title; $('url').textContent = m.url;
+    curTab = m.tabId;
     lastFrameAt = Date.now(); mode = 'frame';
     // 單程延遲含兩台時鐘誤差；減掉目前看過的最小值，剩下的就是排隊造成的額外延遲
     const lat = lastFrameAt - m.ts; minLat = Math.min(minLat, lat); extraLat = lat - minLat; frameTimes.push(lastFrameAt);
   }
   if (m.type === 'same') mode = 'same';
   if (m.type === 'error') { mode = 'error'; $('img').hidden = true; $('msg').hidden = false; $('msg').textContent = m.message; $('title').textContent = '無法顯示'; $('url').textContent = ''; }
-  if (m.type === 'end') mode = 'end';
+  if (m.type === 'end') { mode = 'end'; curTab = null; }
 }
 chrome.runtime.onMessage.addListener(onMsg);
 chrome.runtime.sendMessage({ target: 'voff', type: 'resend' }).catch(() => {}); // 這個分頁是第一張畫面到了才開的，補收最近一筆
@@ -34,3 +36,65 @@ $('showlog').onclick = async () => {
   $('log').textContent = cg_log.join('\n');
   $('log').hidden = !$('log').hidden;
 };
+
+// ---- 遠端操作：座標以 0 到 1 的比例傳，host 再換算成它自己的可視區 ----
+const img = $('img'), kb = $('kb');
+const sendInput = (ev) => { if (curTab != null) chrome.runtime.sendMessage({ target: 'voff', type: 'input', ev: { ...ev, tabId: curTab } }).catch(() => {}); };
+const mods = (e) => (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0);
+const BTN = ['left', 'middle', 'right'];
+
+function norm(e) { // 扣掉 object-fit: contain 的留白
+  const r = img.getBoundingClientRect(), nw = img.naturalWidth, nh = img.naturalHeight;
+  if (!nw || !nh) return null;
+  const k = Math.min(r.width / nw, r.height / nh), w = nw * k, h = nh * k;
+  return { x: (e.clientX - r.left - (r.width - w) / 2) / w, y: (e.clientY - r.top - (r.height - h) / 2) / h };
+}
+const inside = (p) => p && p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1;
+
+let held = null, lastMove = 0; // held：按住的按鈕，拖出圖片外也要收得到
+img.addEventListener('mousedown', (e) => {
+  const p = norm(e); if (!inside(p)) return;
+  e.preventDefault(); kb.focus();
+  held = BTN[e.button] || 'left';
+  sendInput({ type: 'mouse', a: 'down', ...p, b: held, n: e.detail || 1, mod: mods(e) });
+});
+addEventListener('mouseup', (e) => {
+  if (!held) return;
+  const p = norm(e); if (p) sendInput({ type: 'mouse', a: 'up', ...p, b: held, n: e.detail || 1, mod: mods(e) });
+  held = null;
+});
+addEventListener('mousemove', (e) => {
+  if (!held && e.target !== img) return;
+  const now = Date.now(); if (now - lastMove < 33) return;
+  const p = norm(e); if (!p) return;
+  lastMove = now;
+  sendInput({ type: 'mouse', a: 'move', ...p, b: held || 'none', mod: mods(e) });
+});
+img.addEventListener('contextmenu', (e) => e.preventDefault());
+
+let wheel = null; // 觸控板慣性每秒上百筆，累加後每 33 ms 送一次
+img.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const p = norm(e); if (!inside(p)) return;
+  if (wheel) { wheel.dx += e.deltaX; wheel.dy += e.deltaY; Object.assign(wheel, p); return; }
+  wheel = { ...p, dx: e.deltaX, dy: e.deltaY, mod: mods(e) };
+  setTimeout(() => { sendInput({ type: 'mouse', a: 'wheel', ...wheel }); wheel = null; }, 33);
+}, { passive: false });
+
+// 鍵盤由透明的 textarea 接收（輸入法在圖片上不會啟動）
+const keyEv = (a, e) => {
+  const text = e.key === 'Enter' ? '\r' : e.key.length === 1 && !e.ctrlKey && !e.metaKey ? e.key : '';
+  return { type: 'key', a, key: e.key, code: e.code, vk: e.keyCode, text: a === 'down' ? text : '', mod: mods(e) };
+};
+kb.addEventListener('keydown', (e) => {
+  if (e.isComposing || e.keyCode === 229) return; // 組字中的按鍵留給輸入法
+  if (e.metaKey && e.key === 'v') return; // 貼上走 paste 事件，送的是這台的剪貼簿
+  e.preventDefault(); sendInput(keyEv('down', e));
+});
+kb.addEventListener('keyup', (e) => {
+  if (e.isComposing || e.keyCode === 229) return;
+  if (e.metaKey && e.key === 'v') return;
+  e.preventDefault(); sendInput(keyEv('up', e));
+});
+kb.addEventListener('compositionend', (e) => { if (e.data) sendInput({ type: 'text', text: e.data }); kb.value = ''; });
+kb.addEventListener('paste', (e) => { e.preventDefault(); const t = e.clipboardData.getData('text'); if (t) sendInput({ type: 'text', text: t }); });

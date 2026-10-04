@@ -1,6 +1,6 @@
 # cctabgaze
 
-在另一台電腦的 Chrome 旁觀這台 Chrome 裡 AI（Claude in Chrome）正在操作的分頁。只看不動。
+在另一台電腦的 Chrome 旁觀這台 Chrome 裡 AI（Claude in Chrome）正在操作的分頁，並可從那台操作（滑鼠、滾輪、鍵盤、輸入法、貼上）。
 
 ```
 viewer（本機）                       Google 同步                         host（遠端）
@@ -30,16 +30,20 @@ WebRTC 直連（Tailscale）◄══════ 畫面 ═══════�
 ## 安全
 
 - 兩台都帶 `debugger` 權限（Chrome 不允許設為選用），但 viewer 角色的程式不會使用它。
-- host 只呼叫 `debugger` 的 attach、detach、`Page.captureScreenshot`，並丟棄 viewer 送來的所有 DataChannel 訊息。
+- host 只呼叫 `debugger` 的 attach、detach、`Page.captureScreenshot`，以及固定的三種輸入指令：`Input.dispatchMouseEvent`、`Input.dispatchKeyEvent`、`Input.insertText`。
+- viewer 送來的輸入在 `background.js` 的 `input()` 逐項檢查：型別與按鍵查表、數值夾範圍、字串截斷，參數從零組起；沒接上分頁、或輸入帶的分頁編號和目前接上的不同，一律丟棄。
 - offer 與 answer 都只保留 Tailscale 網段（`100.64.0.0/10`、`fd7a:115c:a1e0::/48`）的位址。
-- 同一個 Google 帳號、且在同一個 Tailscale 網路內的裝置都能請求觀看，沒有另外的配對密碼。
+- **沒有操作限制**：同一個 Google 帳號、且在同一個 Tailscale 網路內的裝置，連上就能在 host 已登入的網站上點擊與輸入，沒有另外的配對密碼或「允許操作」開關。輸入內容（包含密碼欄位）走 DataChannel，經 Tailscale 與 DTLS 加密，不經過 Google 同步。
 
 ## 限制
 
 - 握手約 6 到 10 秒，受 Chrome 同步速度影響。
 - 「AI 是否開著」以分頁群組標題為準（`Claude`、`Claude (MCP)`，前面可有 ⌛🔔✅），這是 Claude 插件的實作細節，它改版可能失效。
 - 截不到 `chrome://` 頁面。
-- 沒有滑鼠鍵盤輸入、聲音。畫面是連續截圖，不是影片。
+- Chrome 自己的介面（原生右鍵選單、`<select>` 下拉、檔案選擇、`alert`／`confirm`、密碼提示）截不到，也點不到，可能擋住後續輸入。
+- viewer 的 Chrome 會先吃掉部分快捷鍵（Cmd+W、Cmd+T 等）。Cmd+V 貼的是 viewer 這台的剪貼簿。
+- 你和 AI 可以同時操作同一個分頁，沒有互斥。
+- 沒有聲音。畫面是連續截圖，不是影片。
 
 ## 效能（實測）
 

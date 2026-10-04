@@ -1,12 +1,12 @@
 // viewer 端 WebRTC（offscreen 頁面）：建立連線、組回畫面，以 blob URL 交給檢視頁面顯示。
-// 這裡只收不送：host 不會收到任何指令（host 也會丟棄 viewer 送來的所有訊息）
+// 畫面往這裡來；檢視頁面的滑鼠鍵盤事件經這裡送給 host（host 在 input() 逐項檢查後才執行）
 const vsend = (m) => chrome.runtime.sendMessage({ target: 'sw', ...m }).catch(() => {});
 const vlog = (...a) => vsend({ type: 'log', line: '[viewer] ' + a.join(' ') });
 const emit = (m) => { vlast = m; chrome.runtime.sendMessage({ target: 'viewer', ...m }).catch(() => {}); };
-let vpc = null, vcur = null, vlast = null, vurls = [];
+let vpc = null, vdc = null, vcur = null, vlast = null, vurls = [];
 
 function vstop() {
-  const p = vpc; vpc = null; vcur = null;
+  const p = vpc; vpc = null; vdc = null; vcur = null;
   if (p) { p.onconnectionstatechange = null; p.close(); }
 }
 
@@ -15,6 +15,7 @@ async function vstart() {
   const p = vpc = new RTCPeerConnection({ iceServers: [] });
   const dc = p.createDataChannel('v');
   dc.binaryType = 'arraybuffer';
+  vdc = dc;
   dc.onmessage = onData;
   let connected = false;
   p.onconnectionstatechange = () => {
@@ -47,7 +48,7 @@ function showFrame(m, parts) {
   const src = URL.createObjectURL(new Blob(parts, { type: 'image/jpeg' }));
   vurls.push(src);
   if (vurls.length > 4) URL.revokeObjectURL(vurls.shift());
-  emit({ type: 'frame', src, title: m.title, url: m.url, state: m.state, ts: m.ts });
+  emit({ type: 'frame', src, title: m.title, url: m.url, state: m.state, ts: m.ts, tabId: m.tabId });
 }
 
 chrome.runtime.onMessage.addListener((m) => {
@@ -55,5 +56,6 @@ chrome.runtime.onMessage.addListener((m) => {
   if (m.type === 'start') vstart().catch((e) => vlog('start 失敗:', e.message));
   if (m.type === 'answer' && vpc) vpc.setRemoteDescription({ type: 'answer', sdp: keepTailscaleOnly(m.sdp).sdp }).catch((e) => vlog('answer 失敗:', e.message));
   if (m.type === 'stop') vstop();
+  if (m.type === 'input' && vdc?.readyState === 'open') vdc.send(JSON.stringify(m.ev));
   if (m.type === 'resend' && vlast) emit(vlast); // 檢視頁面是第一張畫面到了才開的，補送最近一筆
 });

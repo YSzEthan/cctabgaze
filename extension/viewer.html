@@ -15,7 +15,8 @@
   #age, #status { flex:none; }
   #age { margin-left:auto; }
   #stage { flex:1; min-height:0; display:flex; align-items:center; justify-content:center; }
-  #img { max-width:100%; max-height:100%; object-fit:contain; }
+  #img { max-width:100%; max-height:100%; object-fit:contain; cursor:default; user-select:none; -webkit-user-drag:none; }
+  #kb { position:fixed; left:0; top:0; width:1px; height:1px; opacity:0; border:0; padding:0; resize:none; }
   #msg { color:var(--mute); }
   #log { margin:0; padding:8px 16px; max-height:30vh; overflow:auto; white-space:pre-wrap; word-break:break-all; font:12px ui-monospace, monospace; border-top:1px solid var(--line); }
   button { font:inherit; padding:4px 10px; }
@@ -25,6 +26,7 @@
 <header><strong id="title">cctabgaze</strong><span id="url"></span><span id="age"></span><span id="status"></span><button id="showlog">診斷紀錄</button></header>
 <main id="stage"><img id="img" alt="" hidden><div id="msg">等待畫面…</div></main>
 <pre id="log" hidden></pre>
+<textarea id="kb" aria-label="keyboard input" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
 <script src="viewer.js"></script>
 </body>
 </html>

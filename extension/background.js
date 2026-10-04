@@ -1,110 +1,140 @@
-// cctabgaze 插件：只呼叫 chrome.debugger 的 getTargets / attach / detach / sendCommand('Page.captureScreenshot')
-const RELAY = 'ws://127.0.0.1:17817/ext';
-const INTERVAL_MS = 500;
-const TIMEOUT_MS = 5000;
+// cctabgaze host：被動待命。viewer 寫入 cg_req → 這裡被同步事件叫醒 → 有 Claude 分頁群組才回應
+// 整份程式只呼叫 chrome.debugger 的 attach / detach / sendCommand('Page.captureScreenshot')
+const REQ = 'cg_req', RES = 'cg_res';
+const MIN_INTERVAL = 500, FALLBACK = 3000, SHOT_TIMEOUT = 5000, REQ_TTL = 60000;
+const AI_TITLES = new Set(['Claude', 'Claude (MCP)']);
+const PREFIX = /^(⌛|🔔|✅)\s*/;
+const STATES = { '⌛': 'running', '🔔': 'permission', '✅': 'done' };
 
-let ws = null;
-let viewers = 0;
-let attachedTabId = null;
-let running = false;
-let lastData = null;
+chrome.action.onClicked.addListener(() => chrome.tabs.create({ url: chrome.runtime.getURL('viewer.html') }));
 
-const send = (obj) => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj)); };
+// ---- 診斷紀錄（viewer 頁面可顯示）----
+let q = Promise.resolve();
+const slog = (...a) => { q = q.then(async () => {
+  const line = `[${new Date().toISOString().slice(11, 23)}] ` + a.join(' ');
+  const { cg_log = [] } = await chrome.storage.local.get('cg_log');
+  cg_log.push(line);
+  await chrome.storage.local.set({ cg_log: cg_log.slice(-300) });
+}); return q; };
 
-function connect() {
-  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
-  ws = new WebSocket(RELAY);
-  ws.onopen = () => { ws._ping = setInterval(() => send({ type: 'ping' }), 20000); };
-  ws.onmessage = (e) => {
-    let m; try { m = JSON.parse(e.data); } catch { return; }
-    if (m && m.type === 'viewers' && Number.isInteger(m.n)) setViewers(m.n);
-  };
-  ws.onclose = () => { clearInterval(ws._ping); setViewers(0); };
-  ws.onerror = () => {};
+// ---- 分頁活動時間：在多個 AI 分頁間穩定選擇 ----
+const activity = new Map();
+const touch = (id) => activity.set(id, Date.now());
+chrome.tabs.onUpdated.addListener(touch);
+chrome.tabs.onActivated.addListener(({ tabId }) => touch(tabId));
+chrome.tabs.onRemoved.addListener((id) => activity.delete(id));
+
+async function findClaudeGroups() {
+  const groups = await chrome.tabGroups.query({});
+  return groups.filter((g) => AI_TITLES.has((g.title || '').replace(PREFIX, '').trim()));
+}
+const stateOf = (title) => STATES[((title || '').match(PREFIX) || [])[1]] || 'idle';
+
+async function pickTab(groups) {
+  let best = null, bestAt = -1;
+  for (const g of groups) {
+    for (const t of await chrome.tabs.query({ groupId: g.id })) {
+      if (!/^https?:/.test(t.url || '')) continue;
+      const at = Math.max(t.lastAccessed || 0, activity.get(t.id) || 0);
+      if (at > bestAt) { best = t; bestAt = at; }
+    }
+  }
+  return best;
 }
 
-function setViewers(n) {
-  viewers = n;
-  if (n > 0 && !running) loop();
-  if (n === 0) release();
+// ---- 連線階段 ----
+let session = null; // { req, attachedTabId, lastData, lastStepAt }
+let timer = null;
+const toOff = (m) => chrome.runtime.sendMessage({ target: 'offscreen', ...m }).catch(() => {});
+
+async function ensureOffscreen() {
+  const ctx = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
+  if (!ctx.length) await chrome.offscreen.createDocument({ url: 'offscreen.html', reasons: ['WEB_RTC'], justification: '與另一台電腦的 Chrome 建立 WebRTC 連線傳送畫面' });
 }
 
 async function release() {
-  if (attachedTabId !== null) {
-    const t = attachedTabId; attachedTabId = null; lastData = null;
-    try { await chrome.debugger.detach({ tabId: t }); } catch {}
-  }
+  if (!session || session.attachedTabId == null) return;
+  const t = session.attachedTabId;
+  session.attachedTabId = null; session.lastData = null;
+  try { await chrome.debugger.detach({ tabId: t }); } catch {}
+}
+chrome.debugger.onDetach.addListener((src) => { if (session && src.tabId === session.attachedTabId) { session.attachedTabId = null; session.lastData = null; } });
+
+async function endSession(reason) {
+  const s = session;
+  if (!s) return;
+  session = null;
+  clearTimeout(timer);
+  slog('結束連線：', reason);
+  await toOff({ type: 'end', reason });
+  if (s.attachedTabId != null) chrome.debugger.detach({ tabId: s.attachedTabId }).catch(() => {});
+  setTimeout(() => { if (!session) chrome.offscreen.closeDocument().catch(() => {}); }, 1500);
 }
 
-// 活動時間：分頁載入、更新或被切到前景時記錄，用來在多個 AI 分頁間穩定選擇（避免來回跳）
-const activity = new Map();
-const touch = (tabId) => activity.set(tabId, Date.now());
-chrome.tabs.onUpdated.addListener((tabId) => touch(tabId));
-chrome.tabs.onActivated.addListener(({ tabId }) => touch(tabId));
-chrome.tabs.onRemoved.addListener((tabId) => activity.delete(tabId));
+const shot = async (tabId) => (await Promise.race([
+  chrome.debugger.sendCommand({ tabId }, 'Page.captureScreenshot', { format: 'jpeg', quality: 50 }),
+  new Promise((_, rej) => setTimeout(() => rej(new Error('截圖逾時')), SHOT_TIMEOUT)),
+])).data;
 
-// AI 的分頁 = 已被別的偵錯者接上的分頁中，最近有活動的那個；目前接上的分頁沒有更新的活動就不換。
-// 都找不到就退回最近使用過的一般網頁分頁
-async function pickTarget() {
-  const targets = await chrome.debugger.getTargets();
-  const others = targets.filter((t) => t.type === 'page' && t.attached && t.tabId && t.tabId !== attachedTabId);
-  let best = attachedTabId;
-  let bestAt = attachedTabId === null ? -1 : activity.get(attachedTabId) || 0;
-  for (const t of others) {
-    const at = activity.get(t.tabId) || 0;
-    if (best === null || at > bestAt) { best = t.tabId; bestAt = at; }
-  }
-  if (best !== null) return best;
-  // 沒有任何偵錯者接著的分頁（AI 閒置）：選最近使用過的 http/https 分頁，排除檢視頁自己
-  const tabs = await chrome.tabs.query({});
-  let pick = null, pickAt = -1;
-  for (const t of tabs) {
-    if (!/^https?:/.test(t.url || '') || /^https?:\/\/(localhost|127\.0\.0\.1):17817\//.test(t.url)) continue;
-    const at = Math.max(t.lastAccessed || 0, activity.get(t.id) || 0);
-    if (at > pickAt) { pick = t.id; pickAt = at; }
-  }
-  return pick;
-}
+const schedule = (ms) => { clearTimeout(timer); timer = setTimeout(step, ms); };
 
-async function shot(tabId) {
-  const res = await Promise.race([
-    chrome.debugger.sendCommand({ tabId }, 'Page.captureScreenshot', { format: 'jpeg', quality: 50 }),
-    new Promise((_, rej) => setTimeout(() => rej(new Error('截圖逾時')), TIMEOUT_MS)),
-  ]);
-  return res.data;
-}
-
-async function loop() {
-  running = true;
-  while (viewers > 0) {
-    try {
-      const tabId = await pickTarget();
-      if (tabId === null) { send({ type: 'error', message: '找不到可截圖的分頁' }); }
-      else {
-        if (tabId !== attachedTabId) {
-          await release();
-          try { await chrome.debugger.attach({ tabId }, '1.3'); attachedTabId = tabId; }
-          catch (e) { send({ type: 'error', message: '無法接上分頁：' + e.message }); }
-        }
-        if (attachedTabId === tabId) {
-          const tab = await chrome.tabs.get(tabId);
-          const data = await shot(tabId);
-          if (data === lastData) send({ type: 'same', ts: Date.now() });
-          else { lastData = data; send({ type: 'frame', tabId, title: tab.title || '', url: tab.url || '', ts: Date.now(), data }); }
-        }
-      }
-    } catch (e) {
-      send({ type: 'error', message: String(e.message || e) });
-      await release();
+async function step() {
+  const s = session;
+  if (!s) return;
+  s.lastStepAt = Date.now();
+  let sentFrame = false;
+  try {
+    const groups = await findClaudeGroups();
+    if (!groups.length) return endSession('ai-ended');
+    const tab = await pickTab(groups);
+    if (!tab) toOff({ type: 'ctl', msg: { type: 'error', message: 'Claude 分頁群組裡沒有可截圖的網頁分頁' } });
+    else {
+      if (s.attachedTabId !== tab.id) { await release(); await chrome.debugger.attach({ tabId: tab.id }, '1.3'); s.attachedTabId = tab.id; }
+      const data = await shot(tab.id);
+      if (session !== s) return;
+      const state = stateOf((groups.find((g) => g.id === tab.groupId) || groups[0]).title);
+      if (data === s.lastData) toOff({ type: 'ctl', msg: { type: 'same', state } });
+      else { s.lastData = data; sentFrame = true; toOff({ type: 'frame', b64: data, title: tab.title || '', url: tab.url || '', state, tabId: tab.id, ts: Date.now() }); }
     }
-    await new Promise((r) => setTimeout(r, INTERVAL_MS));
+  } catch (e) {
+    toOff({ type: 'ctl', msg: { type: 'error', message: String(e.message || e) } });
+    await release();
   }
-  running = false;
+  if (session === s) schedule(sentFrame ? FALLBACK : MIN_INTERVAL); // 送了畫面就等 offscreen 回報「送完了」
 }
 
-chrome.debugger.onDetach.addListener((src) => { if (src.tabId === attachedTabId) { attachedTabId = null; lastData = null; } });
-chrome.alarms.create('keepalive', { periodInMinutes: 0.5 });
-chrome.alarms.onAlarm.addListener(connect);
-chrome.runtime.onStartup.addListener(connect);
-chrome.runtime.onInstalled.addListener(connect);
-connect();
+// ---- 被動回應 viewer 的請求 ----
+const reply = (req, body) => chrome.storage.sync.set({ [RES]: { to: req.from, id: req.id, t: Date.now(), ...body } });
+
+async function onRequest(req) {
+  const { role, deviceId } = await chrome.storage.local.get(['role', 'deviceId']);
+  if (role !== 'host' || req.from === deviceId) return;
+  const age = Date.now() - req.t;
+  if (age > REQ_TTL) return slog('忽略過期的請求，已過', age, 'ms');
+  slog('收到連線請求', req.id.slice(0, 8), '，延遲約', age, 'ms');
+  if (!(await findClaudeGroups()).length) { await reply(req, { error: 'ai-idle' }); return slog('沒有 Claude 分頁群組，拒絕連線'); }
+  await endSession('replaced');
+  session = { req, attachedTabId: null, lastData: null, lastStepAt: 0 };
+  await ensureOffscreen();
+  for (let i = 0; i < 5; i++) {
+    try { await chrome.runtime.sendMessage({ target: 'offscreen', type: 'offer', sdp: req.sdp, id: req.id }); return; }
+    catch { await new Promise((r) => setTimeout(r, 300)); }
+  }
+  slog('offscreen 沒有回應');
+}
+
+chrome.storage.onChanged.addListener((ch, area) => {
+  const req = area === 'sync' && ch[REQ] && ch[REQ].newValue;
+  if (req) onRequest(req);
+});
+
+chrome.tabGroups.onRemoved.addListener(async () => { if (session && !(await findClaudeGroups()).length) endSession('ai-ended'); });
+
+chrome.runtime.onMessage.addListener((m) => {
+  if (m.target !== 'sw') return;
+  if (m.type === 'log') slog('[offscreen]', m.line);
+  if (m.type === 'answer' && session && m.id === session.req.id) reply(session.req, { sdp: m.sdp }).then(() => slog('answer 已寫入 sync'));
+  if (m.type === 'open' && session) { slog('DataChannel 開啟，開始傳畫面'); schedule(0); }
+  if (m.type === 'ready' && session) schedule(Math.max(0, MIN_INTERVAL - (Date.now() - session.lastStepAt)));
+  if (m.type === 'closed') endSession('viewer-left');
+});

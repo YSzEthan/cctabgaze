@@ -4,20 +4,20 @@
 
 ```
 viewer（本機）                       Google 同步                         host（遠端）
-按「連線」→ 寫入 cg_req ───────────────────────────────►  背景程式被叫醒
+點 Viewer → 寫入 cg_req ───────────────────────────────►  背景程式被叫醒
                                                           有 Claude 分頁群組才回應
 收到 cg_res ◄────────────────────────────────────────  寫入 cg_res（answer）
 WebRTC 直連（Tailscale）◄══════ 畫面 ═════════════════  debugger 截圖，只送最新一張
 ```
 
 - host 平常待命，不主動寫入任何資料；**只有 Claude 分頁群組存在時才會回應連線請求**。
-- 同步只用來交換連線資訊（只含 Tailscale 位址），畫面走 WebRTC 直連，不經過 Google。
+- 同步只用來交換連線資訊（只含允許網段內的位址，預設是 Tailscale），畫面走 WebRTC 直連，不經過 Google。
 - 不需要 ssh、不需要常駐程式。
 
 ## 安裝（兩台都做一次）
 
 1. 兩台 Chrome 登入同一個 Google 帳號並開啟同步。
-2. 兩台都在 Tailscale 網路內。
+2. 兩台都在 Tailscale 網路內（或在你另外設定的允許網段內，見「允許的網段」）。
 3. `chrome://extensions` → 開啟開發人員模式 → 載入未封裝項目 → 選 `extension/`。兩台的插件 ID 都是 `offomejgoflopledfnhhkdldnhfejgjl`（manifest 固定了 `key`，`storage.sync` 依 ID 分區，ID 不同就不會互通）。
 4. 預設角色是 host，遠端那台不用設定。本機點插件圖示，在懸浮視窗按「Viewer」。
 
@@ -30,14 +30,27 @@ WebRTC 直連（Tailscale）◄══════ 畫面 ═══════�
 - `‹` `›` `⟳` 與網址框（Enter 導向，沒有協定會補 `https://`）作用在目前截的分頁。
 - 分頁列列出 host 上 Claude 分頁群組的所有分頁。點分頁＝釘選它（只換截圖對象，不會切換 host 作用中的分頁）；`×` 關閉；`＋` 開新分頁並加入群組；「自動」回到跟隨 AI。群組只剩一個分頁時不能關（關光等於 AI 結束）。
 
-出問題時按「診斷紀錄」，內容同時包含 host 背景程式與這個頁面的紀錄。
+**關掉檢視分頁、把它導去別的網址、或在懸浮視窗切回 Host，連線就會停止**（host 的 debugger 也會放開）。host 端的人在 Chrome 的「正在偵錯此瀏覽器」提示列按「取消」，也會結束這次連線。host 被連上時畫面截圖期間會一直出現這個提示列。
+
+**複製與貼上：** 在 viewer 按 Cmd+C（或 Cmd+X），host 目前選取的文字會寫進 viewer 這台的剪貼簿（密碼欄位不讀）。按 Cmd+V 貼的是 viewer 這台的剪貼簿，長文字會分段送。
+
+出問題時按「診斷紀錄」。紀錄存在各自機器的本機：viewer 的檢視頁看到的是 viewer 這台的紀錄（含 `[viewer]` 前綴的連線紀錄），要看 host 的得在 host 那台開懸浮視窗按「紀錄」。
+
+## 允許的網段
+
+連線只接受允許網段內的位址，預設是 `100.64.0.0/10` 與 `fd7a:115c:a1e0::/48`（Tailscale；NetBird 的 `100.96.x.x` 也落在第一段）。換別的 VPN 或要放寬，在懸浮視窗的「允許的網段」一行一個填 CIDR，留空還原預設。
+
+- **設定存在各機器本機，不同步**，所以兩台都要各設一次。
+- 過濾分兩層：SDP 裡不在網段內的 candidate 全部丟掉；連上後再讀實際選用的兩端位址，任一邊不在網段內（或讀不到）就關閉連線。
+- 位址必須是乾淨的 IP 字面值，主機名、`.local`、IPv4-mapped IPv6 一律拒絕。
+- 解析邏輯有測試：`node test/rtc.test.js`。
 
 ## 安全
 
 - 兩台都帶 `debugger` 權限（Chrome 不允許設為選用），但 viewer 角色的程式不會使用它。
-- host 只呼叫 `debugger` 的 attach、detach、`Page.captureScreenshot`，以及固定的三種輸入指令：`Input.dispatchMouseEvent`、`Input.dispatchKeyEvent`、`Input.insertText`。
+- host 只呼叫 `debugger` 的 attach、detach、`Page.captureScreenshot`、固定的三種輸入指令（`Input.dispatchMouseEvent`、`Input.dispatchKeyEvent`、`Input.insertText`），以及複製用的一段寫死的 `Runtime.evaluate`（不接受 viewer 傳來的任何程式碼）。
 - viewer 送來的輸入在 `background.js` 的 `input()` 逐項檢查：型別與按鍵查表、數值夾範圍、字串截斷，參數從零組起；沒接上分頁、或輸入帶的分頁編號和目前接上的不同，一律丟棄。
-- offer 與 answer 都只保留 Tailscale 網段（`100.64.0.0/10`、`fd7a:115c:a1e0::/48`）的位址。
+- offer 與 answer 都只保留允許網段內的位址，連上後再檢查實際位址（見「允許的網段」）。
 - **沒有操作限制**：同一個 Google 帳號、且在同一個 Tailscale 網路內的裝置，連上就能在 host 已登入的網站上點擊與輸入，沒有另外的配對密碼或「允許操作」開關。輸入內容（包含密碼欄位）走 DataChannel，經 Tailscale 與 DTLS 加密，不經過 Google 同步。
 
 ## 分頁控制的風險
@@ -52,13 +65,13 @@ WebRTC 直連（Tailscale）◄══════ 畫面 ═══════�
 - 「AI 是否開著」以分頁群組標題為準（`Claude`、`Claude (MCP)`，前面可有 ⌛🔔✅），這是 Claude 插件的實作細節，它改版可能失效。
 - 截不到 `chrome://` 頁面。
 - Chrome 自己的介面（原生右鍵選單、`<select>` 下拉、檔案選擇、`alert`／`confirm`、密碼提示）截不到，也點不到，可能擋住後續輸入。
-- viewer 的 Chrome 會先吃掉部分快捷鍵（Cmd+W、Cmd+T 等）。Cmd+V 貼的是 viewer 這台的剪貼簿。
+- viewer 的 Chrome 會先吃掉部分快捷鍵（Cmd+W、Cmd+T 等）。
 - 你和 AI 可以同時操作同一個分頁，沒有互斥。
 - 沒有聲音。畫面是連續截圖，不是影片。
 
 ## 效能（實測）
 
-- 截圖間隔：畫面有變化時，上一張送完後 100 ms 再截下一張；沒變化時每 500 ms 檢查一次並送 `same`。
+- 截圖間隔：畫面有變化時，上一張**確認送達**後 100 ms 內再截下一張（送達前不截新的，沒有備援計時器）；沒變化時每 500 ms 檢查一次並送 `same`。
 - host 螢幕鎖定、負載測試頁（時鐘加持續重繪的色塊）：約 9 fps，額外延遲 +77 ms；改前約 2 fps。右上角會顯示近 5 秒的 fps 與額外延遲。
 - 不用 CDP `Page.startScreencast`：host 螢幕鎖定、頁面不可見時，它一張畫面都不會產生（實測 0 張），而 `Page.captureScreenshot` 不受影響。
 

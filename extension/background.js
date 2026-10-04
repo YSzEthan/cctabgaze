@@ -1,5 +1,5 @@
 // cctabgaze host：被動待命。viewer 寫入 cg_req → 這裡被同步事件叫醒 → 有 Claude 分頁群組才回應
-// chrome.debugger 只用 attach / detach / sendCommand，指令只有 Page.captureScreenshot 與 input() 裡固定的三種 Input.*；
+// chrome.debugger 只用 attach / detach / sendCommand，指令只有 Page.captureScreenshot、input() 裡固定的三種 Input.*，以及複製用的一段寫死的 Runtime.evaluate；
 // 分頁控制（網址、上一頁、切換、開啟、關閉）只在 control() 裡，且只作用在 Claude 分頁群組內的分頁
 const REQ = 'cg_req', RES = 'cg_res';
 const MIN_INTERVAL = 500, FAST_INTERVAL = 100, INPUT_BOOST = 2000, FALLBACK = 3000, PENDING_TTL = 10000, SHOT_TIMEOUT = 5000, REQ_TTL = 60000;
@@ -86,10 +86,15 @@ async function endSession(reason) {
   if (s.attachedTabId != null) chrome.debugger.detach({ tabId: s.attachedTabId }).catch(() => {});
 }
 
-const shot = async (tabId) => (await Promise.race([
-  chrome.debugger.sendCommand({ tabId }, 'Page.captureScreenshot', { format: 'jpeg', quality: 50 }),
-  new Promise((_, rej) => setTimeout(() => rej(new Error('截圖逾時')), SHOT_TIMEOUT)),
-])).data;
+async function shot(tabId) {
+  let t;
+  try {
+    return (await Promise.race([
+      chrome.debugger.sendCommand({ tabId }, 'Page.captureScreenshot', { format: 'jpeg', quality: 50 }),
+      new Promise((_, rej) => { t = setTimeout(() => rej(new Error('截圖逾時')), SHOT_TIMEOUT); }),
+    ])).data;
+  } finally { clearTimeout(t); }
+}
 
 const schedule = (ms) => { clearTimeout(timer); timer = setTimeout(step, ms); };
 
@@ -145,11 +150,21 @@ const own = (o, k) => (typeof k === 'string' && Object.hasOwn(o, k) ? o[k] : und
 const str = (v, n) => typeof v === 'string' ? v.slice(0, n) : '';
 const MOUSE = { down: 'mousePressed', up: 'mouseReleased', move: 'mouseMoved', wheel: 'mouseWheel' };
 const MASK = { left: 1, right: 2, middle: 4, none: 0 };
+// 複製：讀目前選取的文字（輸入框取反白的部分；密碼欄位不讀）。這段是常數，不接受 viewer 傳來的任何程式碼
+const COPY_EXPR = `(() => { const a = document.activeElement; if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) return a.type === 'password' ? '' : String(a.value).slice(a.selectionStart, a.selectionEnd); return String(getSelection()); })()`;
+const COPY_MAX = 50000; // 單筆 DataChannel 訊息上限約 256KB，中文 JSON 一字 3 位元組，留餘裕
 const EDIT = { a: 'selectAll', c: 'copy', x: 'cut', z: 'undo' }; // macOS 的編輯快捷鍵不會自己動作，要用 commands
 
 function input(ev) {
   const s = session;
   if (!s || s.attachedTabId == null || !s.view || ev?.tabId !== s.attachedTabId) return; // 沒接上、或 viewer 看的是別的分頁
+  if (ev.type === 'copy') {
+    s.lastInputAt = Date.now();
+    chrome.debugger.sendCommand({ tabId: s.attachedTabId }, 'Runtime.evaluate', { expression: COPY_EXPR, returnByValue: true })
+      .then((r) => { const t = r?.result?.value; if (typeof t === 'string' && t && session === s) toOff({ type: 'ctl', msg: { type: 'copied', text: t.slice(0, COPY_MAX) } }, s); })
+      .catch(() => {});
+    return;
+  }
   const mod = num(ev.mod, 0, 15) | 0;
   let method, params;
   if (ev.type === 'mouse' && own(MOUSE, ev.a)) {

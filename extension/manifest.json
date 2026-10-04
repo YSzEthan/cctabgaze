@@ -9,7 +9,8 @@
     "offscreen",
     "tabs",
     "tabGroups",
-    "debugger"
+    "debugger",
+    "clipboardWrite"
   ],
   "action": {
     "default_title": "cctabgaze",

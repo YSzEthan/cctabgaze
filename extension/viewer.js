@@ -23,6 +23,7 @@ function onMsg(m) {
   if (m.type === 'error') { mode = 'error'; $('img').hidden = true; $('msg').hidden = false; $('msg').textContent = m.message; }
   if (m.type === 'end') { mode = 'end'; curTab = null; setLocked(true); }
   if (m.type === 'tabs') renderTabs(m);
+  if (m.type === 'copied') navigator.clipboard.writeText(m.text).catch(() => {}); // host 選取的文字寫進這台的剪貼簿
 }
 chrome.runtime.onMessage.addListener(onMsg);
 chrome.runtime.sendMessage({ target: 'voff', type: 'resend' }).catch(() => {}); // 這個分頁是第一張畫面到了才開的，補收最近一筆
@@ -90,11 +91,17 @@ const keyEv = (a, e) => {
 };
 for (const a of ['down', 'up']) kb.addEventListener('key' + a, (e) => {
   if (e.isComposing || e.keyCode === 229) return; // 組字中的按鍵留給輸入法
-  if (e.metaKey && e.key === 'v') return; // 貼上走 paste 事件，送的是這台的剪貼簿
+  const cmd = e.metaKey || e.ctrlKey;
+  if (cmd && e.key === 'v') return; // 貼上走 paste 事件，送的是這台的剪貼簿
+  if (a === 'down' && cmd && (e.key === 'c' || e.key === 'x')) sendInput({ type: 'copy' }); // 先讀 host 選取的文字（剪下要在它被剪掉之前）
   e.preventDefault(); sendInput(keyEv(a, e));
 });
 kb.addEventListener('compositionend', (e) => { if (e.data) sendInput({ type: 'text', text: e.data }); kb.value = ''; });
-kb.addEventListener('paste', (e) => { e.preventDefault(); const t = e.clipboardData.getData('text'); if (t) sendInput({ type: 'text', text: t }); });
+kb.addEventListener('paste', (e) => { // 長文字分段送：host 每筆訊息有長度上限，超過會被靜默丟掉；用 Array.from 切才不會切壞表情符號
+  e.preventDefault();
+  const chars = Array.from(e.clipboardData.getData('text'));
+  for (let i = 0; i < chars.length; i += 500) sendInput({ type: 'text', text: chars.slice(i, i + 500).join('') });
+});
 
 // ---- 網址列與分頁列：控制 host 的 Claude 群組分頁。host 才是真正的關口，這裡送的 tabId 不會被改寫 ----
 const sendCtl = (ev) => chrome.runtime.sendMessage({ target: 'voff', type: 'input', ev }).catch(() => {});

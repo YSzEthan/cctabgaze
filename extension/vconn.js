@@ -9,7 +9,7 @@ let vlast = {}, vurls = []; // vlast：各類訊息最近一筆，檢視頁面�
 const vsend = (m, c = vc) => chrome.runtime.sendMessage({ target: 'sw', id: c?.id, ...m }).catch(() => {}); // 上行訊息一律帶連線編號
 const vlog = (...a) => vsend({ type: 'log', line: '[viewer] ' + a.join(' ') });
 const emit = (m) => {
-  if (m.type !== 'same') vlast[m.type] = m;
+  if (m.type !== 'same' && m.type !== 'copied') vlast[m.type] = m; // copied 是一次性的，晚開的檢視頁不能再複製一次
   if (m.type === 'frame') delete vlast.error; // 新畫面取代舊的錯誤，反之亦然
   if (m.type === 'error') delete vlast.frame;
   chrome.runtime.sendMessage({ target: 'viewer', ...m }).catch(() => {});
@@ -86,6 +86,7 @@ function onData(c, e) {
   if (m.type === 'same') emit({ type: 'same', state: m.state });
   if (m.type === 'error') emit({ type: 'error', message: m.message });
   if (m.type === 'end') { clearInterval(c.watch); emit({ type: 'end', reason: m.reason }); } // host 有意結束，不再算沉默
+  if (m.type === 'copied' && typeof m.text === 'string') emit({ type: 'copied', text: m.text });
   if (m.type === 'tabs' && Array.isArray(m.tabs)) emit({ type: 'tabs', cur: m.cur, pinned: m.pinned, tabs: m.tabs });
 }
 

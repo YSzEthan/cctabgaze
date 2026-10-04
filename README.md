@@ -39,8 +39,14 @@ WebRTC 直連（Tailscale）◄══════ 畫面 ═══════�
 - 握手約 6 到 10 秒，受 Chrome 同步速度影響。
 - 「AI 是否開著」以分頁群組標題為準（`Claude`、`Claude (MCP)`，前面可有 ⌛🔔✅），這是 Claude 插件的實作細節，它改版可能失效。
 - 截不到 `chrome://` 頁面。
-- 沒有滑鼠鍵盤輸入、聲音、流暢影片。
+- 沒有滑鼠鍵盤輸入、聲音。畫面是連續截圖，不是影片。
+
+## 效能（實測）
+
+- 截圖間隔：畫面有變化時，上一張送完後 100 ms 再截下一張；沒變化時每 500 ms 檢查一次並送 `same`。
+- host 螢幕鎖定、負載測試頁（時鐘加持續重繪的色塊）：約 9 fps，額外延遲 +77 ms；改前約 2 fps。右上角會顯示近 5 秒的 fps 與額外延遲。
+- 不用 CDP `Page.startScreencast`：host 螢幕鎖定、頁面不可見時，它一張畫面都不會產生（實測 0 張），而 `Page.captureScreenshot` 不受影響。
 
 ## 歷史
 
-`proto-b/` 是兩個插件交換 WebRTC 連線資訊的原型。第 1 階段的 relay + `ssh -L` 方案在 commit `fdb1bd4`。
+兩個插件交換 WebRTC 連線資訊的原型在 commit `fc8e4e6`，壓力測試版在 `8ac7fd2`（`proto-b/`，已刪除）。第 1 階段的 relay + `ssh -L` 方案在 commit `fdb1bd4`。

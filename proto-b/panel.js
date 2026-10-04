@@ -82,7 +82,44 @@ async function viewer() {
   });
 }
 
-$('start').onclick = () => { ls('role', $('role').value); ls('ip', $('ip').value.trim()); $('start').disabled = true; ($('role').value === 'host' ? host : viewer)().catch((e) => log('錯誤', e.message || e)); };
+// 壓力測試接收端：由這台發 offer，對方的 offscreen 頁面回 answer 後連續送 200KB 的假畫面
+async function recv() {
+  await chrome.storage.sync.remove([KEY_OFFER, KEY_ANSWER]);
+  const pc = newPc();
+  const dc = pc.createDataChannel('stress');
+  dc.binaryType = 'arraybuffer';
+  let cur = null, got = 0, bytes = 0; const delays = [];
+  const avg = (a) => a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length) : 0;
+  dc.onopen = () => log('DataChannel 開啟，等待對方送畫面（約 2 分鐘）');
+  dc.onmessage = (e) => {
+    if (typeof e.data === 'string') {
+      const m = JSON.parse(e.data);
+      if (m.type === 'h') cur = { t: m.t, chunks: m.chunks, parts: 0, recv: 0 };
+      if (m.type === 'done') log(`結束：對方送出 ${m.sent} 張、丟掉 ${m.skipped} 張；這台收到 ${got} 張，共 ${Math.round(bytes / 1024)}KB；延遲 平均 ${avg(delays)}ms 最小 ${Math.min(...delays)}ms 最大 ${Math.max(...delays)}ms；前 10 張平均 ${avg(delays.slice(0, 10))}ms，最後 10 張平均 ${avg(delays.slice(-10))}ms（都含兩台時鐘誤差）`);
+      return;
+    }
+    if (!cur) return;
+    cur.recv += e.data.byteLength; cur.parts++;
+    if (cur.parts < cur.chunks) return;
+    const d = Date.now() - cur.t; delays.push(d); bytes += cur.recv; got++; cur = null;
+    if (got % 10 === 0) log(`已收 ${got} 張，這張延遲 ${d}ms，最近 10 張平均 ${avg(delays.slice(-10))}ms`);
+  };
+  await pc.setLocalDescription(await pc.createOffer());
+  await gathered(pc);
+  let { deviceId } = await chrome.storage.local.get('deviceId');
+  if (!deviceId) { deviceId = crypto.randomUUID(); await chrome.storage.local.set({ deviceId }); }
+  await chrome.storage.sync.set({ [KEY_OFFER]: { sdp: pc.localDescription.sdp, t: Date.now(), from: deviceId } });
+  log('offer 已寫入 sync，等待對方回應…');
+  chrome.storage.onChanged.addListener(async (ch, area) => {
+    const a = area === 'sync' && ch[KEY_ANSWER] && ch[KEY_ANSWER].newValue;
+    if (!a) return;
+    log('收到 answer，sync 延遲約', Date.now() - a.t, 'ms');
+    await pc.setRemoteDescription({ type: 'answer', sdp: a.sdp });
+  });
+}
+
+const ROLES = { host, viewer, recv };
+$('start').onclick = () => { ls('role', $('role').value); ls('ip', $('ip').value.trim()); $('start').disabled = true; ROLES[$('role').value]().catch((e) => log('錯誤', e.message || e)); };
 $('reset').onclick = async () => { await chrome.storage.sync.remove([KEY_OFFER, KEY_ANSWER]); log('已清除 sync 內的 offer / answer'); };
 
 $('bg').onclick = async () => { await chrome.storage.local.set({ headless: true }); log('已啟用背景接收。請關閉所有面板，等 60 秒，再到 host 按開始；之後回來按「顯示背景紀錄」'); };

@@ -16,7 +16,7 @@
 <body>
 <p>順序：先在 <b>viewer</b> 那台按「開始」，再到 <b>host</b> 那台按「開始」。兩邊都要登入同一個 Google 帳號並開啟同步。</p>
 <div class="row">
-  角色 <select id="role"><option>host</option><option>viewer</option></select>
+  角色 <select id="role"><option>host</option><option>viewer</option><option>recv</option></select>
   這台的 Tailscale IP（只有 candidate 變成 .local 時才需要填）<input id="ip" size="16" placeholder="100.x.x.x">
   <button id="start">開始</button> <button id="reset">清除 sync 資料</button>
   <button id="bg">啟用背景接收</button> <button id="showlog">顯示背景紀錄</button> <button id="clearlog">清除背景紀錄</button>

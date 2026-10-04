@@ -14,7 +14,7 @@ const slog = (...a) => { q = q.then(async () => {
   const { cg_log = [] } = await chrome.storage.local.get('cg_log');
   cg_log.push(line);
   await chrome.storage.local.set({ cg_log: cg_log.slice(-300) });
-}); return q; };
+}).catch(() => {}); return q; }; // 寫入失敗一次不能讓之後所有紀錄都不寫
 
 // ---- 分頁活動時間：在多個 AI 分頁間穩定選擇 ----
 const activity = new Map();
@@ -48,13 +48,13 @@ function sendTabs(s, tabs, cur) {
   const json = JSON.stringify(msg);
   if (json === s.lastTabs) return;
   s.lastTabs = json;
-  toOff({ type: 'ctl', msg });
+  toOff({ type: 'ctl', msg }, s);
 }
 
 // ---- 連線階段 ----
 let session = null; // { req, attachedTabId, lastData, lastStepAt, lastInputAt, view, pinnedTabId(null=自動跟隨 AI), cur(這輪選中的分頁), tabs, lastTabs }
 let timer = null;
-const toOff = (m) => chrome.runtime.sendMessage({ target: 'offscreen', ...m }).catch(() => {});
+const toOff = (m, s = session) => chrome.runtime.sendMessage({ target: 'offscreen', id: s?.req.id, ...m }).catch(() => {}); // 帶連線編號，offscreen 只認目前那條
 
 async function ensureOffscreen() {
   const ctx = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
@@ -63,10 +63,10 @@ async function ensureOffscreen() {
 
 const forgetTab = (s) => { s.attachedTabId = null; s.lastData = null; };
 
-async function release() {
-  if (session?.attachedTabId == null) return;
-  const t = session.attachedTabId;
-  forgetTab(session);
+async function release(s) {
+  if (s.attachedTabId == null) return;
+  const t = s.attachedTabId;
+  forgetTab(s);
   try { await chrome.debugger.detach({ tabId: t }); } catch {}
 }
 const fastGap = (s) => Math.max(0, FAST_INTERVAL - (Date.now() - s.lastStepAt));
@@ -78,7 +78,7 @@ async function endSession(reason) {
   session = null;
   clearTimeout(timer);
   slog('結束連線：', reason);
-  await toOff({ type: 'end', reason });
+  await toOff({ type: 'end', reason }, s);
   if (s.attachedTabId != null) chrome.debugger.detach({ tabId: s.attachedTabId }).catch(() => {});
   setTimeout(() => { if (!session) chrome.offscreen.closeDocument().catch(() => {}); }, 1500);
 }
@@ -90,9 +90,14 @@ const shot = async (tabId) => (await Promise.race([
 
 const schedule = (ms) => { clearTimeout(timer); timer = setTimeout(step, ms); };
 
-async function step() {
+async function step() { // 單飛：備援計時器與 ready 同時觸發時，不能有兩個 step 並行互拔 debugger
   const s = session;
-  if (!s) return;
+  if (!s || s.busy) return;
+  s.busy = true;
+  try { await stepOnce(s); } finally { s.busy = false; }
+}
+
+async function stepOnce(s) {
   s.lastStepAt = Date.now();
   let sentFrame = false;
   try {
@@ -103,19 +108,24 @@ async function step() {
     const tab = tabs.find((t) => t.id === s.pinnedTabId) || pickTab(tabs);
     s.cur = tab?.id ?? null;
     sendTabs(s, tabs, tab); // 在 attach 之前送：釘到截不到的頁面時清單仍送得出，才切得走
-    if (!tab) toOff({ type: 'ctl', msg: { type: 'error', message: 'Claude 分頁群組裡沒有可截圖的網頁分頁' } });
+    if (!tab) toOff({ type: 'ctl', msg: { type: 'error', message: 'Claude 分頁群組裡沒有可截圖的網頁分頁' } }, s);
     else {
       s.view = { w: tab.width, h: tab.height };
-      if (s.attachedTabId !== tab.id) { await release(); await chrome.debugger.attach({ tabId: tab.id }, '1.3'); s.attachedTabId = tab.id; }
+      if (s.attachedTabId !== tab.id) {
+        await release(s);
+        await chrome.debugger.attach({ tabId: tab.id }, '1.3');
+        s.attachedTabId = tab.id;
+        if (session !== s) return release(s); // attach 的空窗期間連線已結束，不能留下沒人管的 debugger
+      }
       const state = stateOf((groups.find((g) => g.id === tab.groupId) || groups[0]).title);
       const data = await shot(tab.id);
       if (session !== s) return;
-      if (data === s.lastData) toOff({ type: 'ctl', msg: { type: 'same', state } });
-      else { s.lastData = data; sentFrame = true; toOff({ type: 'frame', b64: data, state, tabId: tab.id, ts: Date.now() }); }
+      if (data === s.lastData) toOff({ type: 'ctl', msg: { type: 'same', state } }, s);
+      else { s.lastData = data; sentFrame = true; toOff({ type: 'frame', b64: data, state, tabId: tab.id, ts: Date.now() }, s); }
     }
   } catch (e) {
-    toOff({ type: 'ctl', msg: { type: 'error', message: String(e.message || e) } });
-    await release();
+    toOff({ type: 'ctl', msg: { type: 'error', message: String(e.message || e) } }, s);
+    await release(s);
   }
   const idleGap = Date.now() - s.lastInputAt < INPUT_BOOST ? FAST_INTERVAL : MIN_INTERVAL; // 剛有輸入就加快檢查
   if (session === s) schedule(sentFrame ? FALLBACK : idleGap); // 送了畫面就等 offscreen 回報「送完了」，再只等 FAST_INTERVAL
@@ -205,6 +215,7 @@ const reply = (req, body) => chrome.storage.sync.set({ [RES]: { to: req.from, id
 async function onRequest(req) {
   const { role = 'host', deviceId } = await chrome.storage.local.get(['role', 'deviceId']);
   if (role !== 'host' || req.from === deviceId) return;
+  if ((await chrome.storage.sync.get(REQ))[REQ]?.id !== req.id) return slog('略過已被取代或撤回的請求', req.id.slice(0, 8)); // 排隊期間 viewer 可能已重按或放棄
   const age = Date.now() - req.t;
   if (age > REQ_TTL) return slog('忽略過期的請求，已過', age, 'ms');
   slog('收到連線請求', req.id.slice(0, 8), '，延遲約', age, 'ms');
@@ -219,20 +230,22 @@ async function onRequest(req) {
   slog('offscreen 沒有回應');
 }
 
+let reqQ = Promise.resolve(); // 串行：兩個請求接連到達時不能同時建立 offscreen
 chrome.storage.onChanged.addListener((ch, area) => {
   const req = area === 'sync' && ch[REQ]?.newValue;
-  if (req) onRequest(req);
+  if (req) reqQ = reqQ.then(() => onRequest(req)).catch((e) => slog('處理請求失敗：', e.message || e));
 });
 
 chrome.tabGroups.onRemoved.addListener(async () => { if (session && !(await findClaudeGroups()).length) endSession('ai-ended'); });
 
 chrome.runtime.onMessage.addListener((m) => {
   if (m.target !== 'sw') return;
-  if (m.type === 'log') slog('[offscreen]', m.line);
+  if (m.type === 'log') return slog('[offscreen]', m.line);
+  if (m.type.startsWith('v-') || !session || m.id !== session.req.id) return; // 其餘一律要帶目前這條連線的編號，viewer 端的 v-* 由 viewer-bg.js 處理
   if (m.type === 'input') (m.ev?.type === 'nav' || m.ev?.type === 'tab' ? control : input)(m.ev);
-  if (m.type === 'answer' && session && m.id === session.req.id) reply(session.req, { sdp: m.sdp }).then(() => slog('answer 已寫入 sync'));
-  if (m.type === 'open' && session) { slog('DataChannel 開啟，開始傳畫面'); schedule(0); }
-  if (m.type === 'ready' && session) schedule(fastGap(session)); // ready 只會在送出畫面後出現
+  if (m.type === 'answer') reply(session.req, { sdp: m.sdp }).then(() => slog('answer 已寫入 sync'));
+  if (m.type === 'open') { slog('DataChannel 開啟，開始傳畫面'); schedule(0); }
+  if (m.type === 'ready') schedule(fastGap(session)); // ready 只會在送出畫面後出現
   if (m.type === 'closed') endSession('viewer-left');
 });
 

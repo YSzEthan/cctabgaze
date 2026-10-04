@@ -22,7 +22,7 @@ async function vConnect(auto = false) {
   const s = vs = { id: crypto.randomUUID(), myId: deviceId, focus: !auto, retried: auto && !!prev?.retried, connected: false, ended: false, timer: null, opening: null };
   vStatus('連線中…（約需 10 秒）');
   await ensureOffscreen();
-  await toVoff({ type: 'start' });
+  await toVoff({ type: 'start', id: s.id });
   if (vs === s) s.timer = setTimeout(() => vFail('host 離線或未回應（等了 20 秒）'), 20000);
 }
 
@@ -30,7 +30,7 @@ function vFail(text) {
   clearTimeout(vs?.timer);
   vStatus(text);
   chrome.storage.sync.remove([REQ, RES]);
-  toVoff({ type: 'stop' });
+  toVoff({ type: 'stop', id: vs?.id });
 }
 
 async function showViewer(focus) {
@@ -47,10 +47,12 @@ chrome.storage.onChanged.addListener((ch, area) => {
   clearTimeout(vs.timer);
   slog('[viewer] 收到 host 回應', r.error || 'answer');
   if (r.error === 'ai-idle') return vFail('AI 目前沒有在運作（host 沒有 Claude 分頁群組）');
-  toVoff({ type: 'answer', sdp: r.sdp });
+  toVoff({ type: 'answer', id: vs.id, sdp: r.sdp });
 });
 
+const FROM_VOFF = new Set(['v-offer', 'v-connected', 'v-closed']);
 chrome.runtime.onMessage.addListener((m) => {
+  if (m.target === 'sw' && FROM_VOFF.has(m.type) && m.id !== vs?.id) return; // 不是目前這條連線的訊息
   if (m.target === 'sw' && m.type === 'v-connect') vConnect().catch((e) => vFail('錯誤：' + (e.message || e)));
   if (m.target === 'sw' && m.type === 'v-offer' && vs) {
     if (!m.kept) return vFail('這台沒有 Tailscale 位址，無法連線');

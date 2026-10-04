@@ -86,15 +86,10 @@ const keyEv = (a, e) => {
   const text = e.key === 'Enter' ? '\r' : e.key.length === 1 && !e.ctrlKey && !e.metaKey ? e.key : '';
   return { type: 'key', a, key: e.key, code: e.code, vk: e.keyCode, text: a === 'down' ? text : '', mod: mods(e) };
 };
-kb.addEventListener('keydown', (e) => {
+for (const a of ['down', 'up']) kb.addEventListener('key' + a, (e) => {
   if (e.isComposing || e.keyCode === 229) return; // 組字中的按鍵留給輸入法
   if (e.metaKey && e.key === 'v') return; // 貼上走 paste 事件，送的是這台的剪貼簿
-  e.preventDefault(); sendInput(keyEv('down', e));
-});
-kb.addEventListener('keyup', (e) => {
-  if (e.isComposing || e.keyCode === 229) return;
-  if (e.metaKey && e.key === 'v') return;
-  e.preventDefault(); sendInput(keyEv('up', e));
+  e.preventDefault(); sendInput(keyEv(a, e));
 });
 kb.addEventListener('compositionend', (e) => { if (e.data) sendInput({ type: 'text', text: e.data }); kb.value = ''; });
 kb.addEventListener('paste', (e) => { e.preventDefault(); const t = e.clipboardData.getData('text'); if (t) sendInput({ type: 'text', text: t }); });

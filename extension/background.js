@@ -1,7 +1,7 @@
 // cctabgaze host：被動待命。viewer 寫入 cg_req → 這裡被同步事件叫醒 → 有 Claude 分頁群組才回應
 // 整份程式只呼叫 chrome.debugger 的 attach / detach / sendCommand，指令只有 Page.captureScreenshot 與 input() 裡固定的三種 Input.*
 const REQ = 'cg_req', RES = 'cg_res';
-const MIN_INTERVAL = 500, FAST_INTERVAL = 100, FALLBACK = 3000, SHOT_TIMEOUT = 5000, REQ_TTL = 60000;
+const MIN_INTERVAL = 500, FAST_INTERVAL = 100, INPUT_BOOST = 2000, FALLBACK = 3000, SHOT_TIMEOUT = 5000, REQ_TTL = 60000;
 const AI_TITLES = new Set(['Claude', 'Claude (MCP)']);
 const PREFIX = /^(⌛|🔔|✅)\s*/;
 const STATES = { '⌛': 'running', '🔔': 'permission', '✅': 'done' };
@@ -88,9 +88,9 @@ async function step() {
     const groups = await findClaudeGroups();
     if (!groups.length) return endSession('ai-ended');
     const tab = await pickTab(groups);
-    if (tab) s.view = { w: tab.width, h: tab.height };
     if (!tab) toOff({ type: 'ctl', msg: { type: 'error', message: 'Claude 分頁群組裡沒有可截圖的網頁分頁' } });
     else {
+      s.view = { w: tab.width, h: tab.height };
       if (s.attachedTabId !== tab.id) { await release(); await chrome.debugger.attach({ tabId: tab.id }, '1.3'); s.attachedTabId = tab.id; }
       const state = stateOf((groups.find((g) => g.id === tab.groupId) || groups[0]).title);
       const data = await shot(tab.id);
@@ -102,7 +102,8 @@ async function step() {
     toOff({ type: 'ctl', msg: { type: 'error', message: String(e.message || e) } });
     await release();
   }
-  if (session === s) schedule(sentFrame ? FALLBACK : (Date.now() - s.lastInputAt < 2000 ? FAST_INTERVAL : MIN_INTERVAL)); // 送了畫面就等 offscreen 回報「送完了」，再只等 FAST_INTERVAL；剛有輸入就加快檢查
+  const idleGap = Date.now() - s.lastInputAt < INPUT_BOOST ? FAST_INTERVAL : MIN_INTERVAL; // 剛有輸入就加快檢查
+  if (session === s) schedule(sentFrame ? FALLBACK : idleGap); // 送了畫面就等 offscreen 回報「送完了」，再只等 FAST_INTERVAL
 }
 
 // ---- viewer 的滑鼠鍵盤：呼叫 debugger 前的唯一關口，參數一律從零組，不轉傳 viewer 的物件 ----
@@ -130,8 +131,11 @@ function input(ev) {
     method = 'Input.dispatchKeyEvent';
     params = { type: ev.a === 'up' ? 'keyUp' : text ? 'keyDown' : 'rawKeyDown', modifiers: mod, key, code: str(ev.code, 32), windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk };
     if (text) { params.text = text; params.unmodifiedText = text; }
-    const cmd = ev.a === 'down' && (mod & 4) && !(mod & 3) && (mod & 8 && key.toLowerCase() === 'z' ? 'redo' : own(EDIT, key.toLowerCase()));
-    if (cmd) params.commands = [cmd];
+    if (ev.a === 'down' && (mod & 4) && !(mod & 3)) { // 只有 Cmd，沒有 Alt/Ctrl
+      const k = key.toLowerCase();
+      const cmd = (mod & 8) && k === 'z' ? 'redo' : own(EDIT, k);
+      if (cmd) params.commands = [cmd];
+    }
   } else if (ev.type === 'text') {
     method = 'Input.insertText';
     params = { text: str(ev.text, 2000) };

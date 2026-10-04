@@ -39,6 +39,11 @@ function vFail(text) {
   toVoff({ type: 'stop', id: vs?.id });
 }
 
+async function sendTune() { // 把懸浮視窗選的畫面設定送給 host；沒選過就不送，host 用預設值
+  const { tune } = await chrome.storage.local.get('tune');
+  if (tune) toVoff({ type: 'input', ev: { type: 'tune', ...tune } });
+}
+
 async function showViewer(focus) {
   const [t] = await chrome.tabs.query({ url: VIEWER_URL });
   if (!t) { const n = await chrome.tabs.create({ url: VIEWER_URL, active: focus }); if (focus) await chrome.windows.update(n.windowId, { focused: true }); return; }
@@ -83,6 +88,7 @@ chrome.runtime.onMessage.addListener((m) => {
     else vFail('連線失敗或中斷，請從插件圖示按 Viewer 重試');
   }
   if (m.target !== 'viewer' || !vs) return;
+  if (!vs.tuneSent) { vs.tuneSent = true; sendTune(); } // 收到 host 第一筆資料才送：這時 host 已通過位址檢查，會接受設定
   vs.retried = false; // 收到 host 的資料才算連線真的成功，自動重連的額度才還原
   if (m.type === 'frame') { vs.opening ??= showViewer(vs.focus); vStatus(STATE_TEXT[m.state] || ''); }
   if (m.type === 'same') vStatus(STATE_TEXT[m.state] || lastStatus);
@@ -93,3 +99,5 @@ chrome.runtime.onMessage.addListener((m) => {
 chrome.storage.onChanged.addListener((ch, area) => { // 切回 host 角色：viewer 的連線停止
   if (area === 'local' && ch.role?.newValue === 'host' && vs) vStop('已切回 host，連線已停止');
 });
+
+chrome.storage.onChanged.addListener((ch, area) => { if (area === 'local' && ch.tune && vs?.tuneSent && !vs.ended) sendTune(); }); // 連線中改設定，馬上生效

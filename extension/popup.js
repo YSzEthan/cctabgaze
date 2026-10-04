@@ -52,3 +52,12 @@ $('netssave').onclick = async () => {
   await chrome.storage.local.set({ nets: lines.filter(Boolean) });
   $('netsmsg').textContent = '已儲存，下次連線生效';
 };
+
+// ---- 畫面設定：存在 viewer 這台，背景程式會經 DataChannel 送給 host（host 只認白名單內的值）----
+const TUNE_DEFAULT = { quality: 50, fast: 40, format: 'jpeg' };
+const readTune = () => ({ quality: Number($('fq').value), fast: Number($('fr').value), format: $('ff').value });
+chrome.storage.local.get('tune').then(({ tune }) => {
+  const t = { ...TUNE_DEFAULT, ...tune };
+  $('fq').value = t.quality; $('fr').value = t.fast; $('ff').value = t.format;
+});
+for (const id of ['fq', 'fr', 'ff']) $(id).onchange = () => chrome.storage.local.set({ tune: readTune() });

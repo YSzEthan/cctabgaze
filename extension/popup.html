@@ -15,6 +15,9 @@
   #show { width:100%; margin-top:6px; }
   #log { margin:8px 0 0; max-height:240px; overflow:auto; white-space:pre-wrap; word-break:break-all; font:11px ui-monospace, monospace; }
   details { margin-top:10px; font-size:12px; }
+  .opt { display:flex; align-items:center; gap:8px; margin-top:6px; }
+  .opt label { flex:none; width:3em; color:var(--mute); }
+  .opt select { flex:1; font:inherit; padding:2px 4px; }
   summary { cursor:pointer; color:var(--mute); }
   #nets { width:100%; box-sizing:border-box; margin-top:6px; font:12px ui-monospace, monospace; }
   #netsrow { display:flex; gap:8px; align-items:center; margin-top:6px; }
@@ -30,6 +33,13 @@
 <p id="status"></p>
 <button id="show" hidden>顯示畫面</button>
 <pre id="log" hidden></pre>
+<details>
+  <summary>畫面設定</summary>
+  <p style="margin:6px 0 0;color:var(--mute)">在 viewer 這台選，連線中改了馬上生效。host 只接受下列選項。</p>
+  <div class="opt"><label for="fq">品質</label><select id="fq"><option value="30">低（30）</option><option value="50" selected>標準（50）</option><option value="75">高（75）</option><option value="90">最高（90）</option></select></div>
+  <div class="opt"><label for="fr">速率</label><select id="fr"><option value="200">上限 5 fps</option><option value="100">上限 10 fps</option><option value="66">上限 15 fps</option><option value="40" selected>最快</option></select></div>
+  <div class="opt"><label for="ff">格式</label><select id="ff"><option value="jpeg" selected>JPEG</option><option value="webp">WebP</option><option value="png">PNG（無損，檔案大、較慢）</option></select></div>
+</details>
 <details>
   <summary>允許的網段</summary>
   <p style="margin:6px 0 0;color:var(--mute)">連線只接受這些網段內的位址，一行一個（例如 100.64.0.0/10）。留空就還原預設。<b>兩台都要各設一次</b>，下次連線生效。</p>

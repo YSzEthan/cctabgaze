@@ -2,7 +2,10 @@
 // chrome.debugger 只用 attach / detach / sendCommand，指令只有 Page.captureScreenshot、input() 裡固定的三種 Input.*，以及複製用的一段寫死的 Runtime.evaluate；
 // 分頁控制（網址、上一頁、切換、開啟、關閉）只在 control() 裡，且只作用在 Claude 分頁群組內的分頁
 const REQ = 'cg_req', RES = 'cg_res';
-const MIN_INTERVAL = 500, FAST_INTERVAL = 100, INPUT_BOOST = 2000, FALLBACK = 3000, PENDING_TTL = 10000, SHOT_TIMEOUT = 5000, REQ_TTL = 60000;
+// 畫面設定由 viewer 的懸浮視窗選、經 DataChannel 送來（tune 訊息），這裡只接受白名單內的值
+const QUALITIES = [30, 50, 75, 90], RATES = [200, 100, 66, 40], FORMATS = ['jpeg', 'webp', 'png'];
+const DEFAULT_TUNE = { quality: 50, fast: 40, format: 'jpeg' }; // fast：畫面有變化時，上一張送達後最短隔多少毫秒再截下一張
+const MIN_INTERVAL = 500, INPUT_BOOST = 2000, FALLBACK = 3000, PENDING_TTL = 10000, SHOT_TIMEOUT = 5000, REQ_TTL = 60000;
 const AI_TITLES = new Set(['Claude', 'Claude (MCP)']);
 const PREFIX = /^(⌛|🔔|✅)\s*/;
 const STATES = { '⌛': 'running', '🔔': 'permission', '✅': 'done' };
@@ -69,7 +72,7 @@ async function release(s) {
   forgetTab(s);
   try { await chrome.debugger.detach({ tabId: t }); } catch {}
 }
-const fastGap = (s) => Math.max(0, FAST_INTERVAL - (Date.now() - s.lastStepAt));
+const fastGap = (s) => Math.max(0, s.tune.fast - (Date.now() - s.lastStepAt));
 chrome.debugger.onDetach.addListener((src, reason) => {
   if (src.tabId !== session?.attachedTabId) return;
   if (reason === 'canceled_by_user') return endSession('host-canceled'); // host 端的人在提示列按了「取消」：尊重，結束這次連線
@@ -86,11 +89,11 @@ async function endSession(reason) {
   if (s.attachedTabId != null) chrome.debugger.detach({ tabId: s.attachedTabId }).catch(() => {});
 }
 
-async function shot(tabId) {
+async function shot(tabId, { format, quality }) {
   let t;
   try {
     return (await Promise.race([
-      chrome.debugger.sendCommand({ tabId }, 'Page.captureScreenshot', { format: 'jpeg', quality: 50 }),
+      chrome.debugger.sendCommand({ tabId }, 'Page.captureScreenshot', { format, ...(format !== 'png' && { quality }) }), // png 沒有品質參數
       new Promise((_, rej) => { t = setTimeout(() => rej(new Error('截圖逾時')), SHOT_TIMEOUT); }),
     ])).data;
   } finally { clearTimeout(t); }
@@ -127,12 +130,13 @@ async function stepOnce(s) {
       }
       const state = stateOf((groups.find((g) => g.id === tab.groupId) || groups[0]).title);
       if (s.pending == null || Date.now() - s.pendingAt >= PENDING_TTL) { // 上一張還沒確認送完就不截新的；超過 PENDING_TTL 視為遺失，重送
-        const data = await shot(tab.id);
+        const cfg = s.tune; // 這一張用的設定；中途被改了也不影響這張的格式標記
+        const data = await shot(tab.id, cfg);
         if (session !== s) return;
         if (data === s.lastData) toOff({ type: 'ctl', msg: { type: 'same', state } }, s);
         else {
           s.pending = data; s.pendingAt = Date.now(); s.pendingSeq = ++s.seq; sentFrame = true;
-          toOff({ type: 'frame', b64: data, state, tabId: tab.id, ts: Date.now(), seq: s.seq }, s);
+          toOff({ type: 'frame', b64: data, state, tabId: tab.id, ts: Date.now(), seq: s.seq, fmt: cfg.format }, s);
         }
       }
     }
@@ -140,8 +144,8 @@ async function stepOnce(s) {
     toOff({ type: 'ctl', msg: { type: 'error', message: String(e.message || e) } }, s);
     await release(s);
   }
-  const idleGap = Date.now() - s.lastInputAt < INPUT_BOOST ? FAST_INTERVAL : MIN_INTERVAL; // 剛有輸入就加快檢查
-  if (session === s) schedule(sentFrame ? FALLBACK : idleGap); // 送了畫面就等 offscreen 回報「送完了」，再只等 FAST_INTERVAL
+  const idleGap = Date.now() - s.lastInputAt < INPUT_BOOST ? s.tune.fast : MIN_INTERVAL; // 剛有輸入就加快檢查
+  if (session === s) schedule(sentFrame ? FALLBACK : idleGap); // 送了畫面就等 offscreen 回報「送完了」，再只等 tune.fast
 }
 
 // ---- viewer 的滑鼠鍵盤：呼叫 debugger 前的唯一關口，參數一律從零組，不轉傳 viewer 的物件 ----
@@ -190,6 +194,18 @@ function input(ev) {
   } else return;
   s.lastInputAt = Date.now();
   chrome.debugger.sendCommand({ tabId: s.attachedTabId }, method, params).catch(() => {}); // 不等回應；隱藏分頁可能不回
+}
+
+// ---- viewer 的畫面設定：只認白名單內的值，其餘用預設 ----
+function tune(ev) {
+  if (!session) return;
+  session.tune = {
+    quality: QUALITIES.includes(ev.quality) ? ev.quality : DEFAULT_TUNE.quality,
+    fast: RATES.includes(ev.fast) ? ev.fast : DEFAULT_TUNE.fast,
+    format: FORMATS.includes(ev.format) ? ev.format : DEFAULT_TUNE.format,
+  };
+  session.lastData = null; // 換了格式或品質，下一張不能和舊的比對
+  slog('畫面設定：', JSON.stringify(session.tune));
 }
 
 // ---- viewer 的分頁控制：和 input() 並列的關口。分流在 input() 的「已接上分頁」檢查之前，截不到的頁面也導得出來 ----
@@ -245,7 +261,7 @@ async function onRequest(req) {
   if (!(await findClaudeGroups()).length) { await reply(req, { error: 'ai-idle' }); return slog('沒有 Claude 分頁群組，拒絕連線'); }
   await endSession('replaced');
   const { nets } = await chrome.storage.local.get('nets'); // 允許的網段（各機器本機設定，不經同步）
-  session = { req, attachedTabId: null, lastData: null, pending: null, pendingAt: 0, seq: 0, pendingSeq: 0, lastStepAt: 0, lastInputAt: 0, view: null, pinnedTabId: null, cur: null, tabs: [], lastTabs: null };
+  session = { req, attachedTabId: null, lastData: null, pending: null, pendingAt: 0, seq: 0, pendingSeq: 0, lastStepAt: 0, lastInputAt: 0, view: null, tune: DEFAULT_TUNE, pinnedTabId: null, cur: null, tabs: [], lastTabs: null };
   for (let i = 0; i < 5; i++) {
     try { await ensureOffscreen(); await chrome.runtime.sendMessage({ target: 'offscreen', type: 'offer', sdp: req.sdp, id: req.id, nets }); return; } // 每輪都確認文件還在（它可能剛好自己關掉）
     catch { await new Promise((r) => setTimeout(r, 300)); }
@@ -266,7 +282,7 @@ chrome.runtime.onMessage.addListener((m) => {
   if (m.type === 'log') return slog('[offscreen]', m.line);
   if (m.type === 'idle') return chrome.offscreen.closeDocument().catch(() => {}); // offscreen 自己回報兩條連線都沒了
   if (m.type.startsWith('v-') || !session || m.id !== session.req.id) return; // 其餘一律要帶目前這條連線的編號，viewer 端的 v-* 由 viewer-bg.js 處理
-  if (m.type === 'input') (m.ev?.type === 'nav' || m.ev?.type === 'tab' ? control : input)(m.ev);
+  if (m.type === 'input') (m.ev?.type === 'tune' ? tune : m.ev?.type === 'nav' || m.ev?.type === 'tab' ? control : input)(m.ev);
   if (m.type === 'answer') reply(session.req, { sdp: m.sdp }).then(() => slog('answer 已寫入 sync'));
   if (m.type === 'answer-failed') { reply(session.req, { error: m.reason || 'failed' }); endSession('answer-failed'); } // 不讓 viewer 乾等 20 秒
   if (m.type === 'open') { slog('DataChannel 開啟，開始傳畫面'); schedule(0); }

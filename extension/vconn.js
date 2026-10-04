@@ -91,7 +91,8 @@ function onData(c, e) {
 }
 
 function showFrame(m, parts) {
-  const src = URL.createObjectURL(new Blob(parts, { type: 'image/jpeg' }));
+  const type = { jpeg: 'image/jpeg', webp: 'image/webp', png: 'image/png' }[m.fmt] || 'image/jpeg'; // fmt 來自 host，只認這三種
+  const src = URL.createObjectURL(new Blob(parts, { type }));
   vurls.push(src);
   if (vurls.length > 4) URL.revokeObjectURL(vurls.shift());
   emit({ type: 'frame', src, state: m.state, ts: m.ts, tabId: m.tabId });

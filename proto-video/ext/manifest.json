@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "cctabgaze proto-video",
+  "version": "0.0.1",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA6ABknutI7Iqz+XyZAoZUj48xVSVmx4QQj0M1cYgqsiiHBjiFYqkNhV6gn/VrP7s5Wl63wqy5Jn6uN3Poo44xN8hxZvMPlf025Iz0xVJahrnzZCd3TJWYMNKKKpXvMLNhEyfwpTqRr1fPnMIZbiz8vADRE9N6LpOuyJgbIVo7M15O5jgbstVZOyh7KgC5S/AKKdbp0Y4F3+rZjC+F4PZx9fDeHHu6IcgYhwyJaP1x+tLdbQlefGW0uPtdRxpyMtBXTrEYaGW2wXQEosMTbTd60klZVGWX104feuKnC4RQOlcPpuSafVeGZazNVuH1DMb7t2ove7FgBmVeS6iQ4J2O4wIDAQAB",
+  "description": "實驗：chrome.tabCapture 加 WebRTC 視訊軌，逐一測試每個編碼",
+  "permissions": ["tabCapture", "offscreen", "tabs", "debugger"],
+  "action": { "default_title": "proto-video" },
+  "background": { "service_worker": "bg.js" }
+}

@@ -1,16 +1,30 @@
-// viewer 端的大腦（由 background.js 載入）：經 sync 向 host 發請求，WebRTC 在 offscreen 跑，
+// viewer 端的大腦（由 background.ts 載入）：經 sync 向 host 發請求，WebRTC 在 offscreen 跑，
 // 第一張畫面到了才開（或切到）檢視分頁，連線成功前使用者看不到任何分頁
-const VIEWER_URL = chrome.runtime.getURL('viewer.html');
-const STATE_TEXT = { running: '⌛ AI 執行中', permission: '🔔 AI 等待授權', done: '✅ AI 已完成', idle: 'AI 閒置' };
-const END_TEXT = { 'ai-ended': 'AI 已結束', replaced: '已被另一台 viewer 取代', 'host-canceled': 'host 端取消了連線' }; // host 結束連線的原因，這幾種都不自動重連
-const ERROR_TEXT = { 'ai-idle': 'AI 目前沒有在運作（host 沒有 Claude 分頁群組）', 'no-net': 'host 沒有符合允許網段的位址，無法連線' };
-let vs = null; // { id, myId, focus, retried, ended, timer, opening }
-let lastStatus = '';
-const vStatus = (t) => { if (t !== lastStatus) { lastStatus = t; chrome.storage.local.set({ cg_status: t }); } };
+import { REQ, RES, slog, ensureOffscreen, errText } from './shared.ts';
+import type { Msg, Req, Res, Tune, VoffBody, VoffMsg } from './protocol.ts';
 
-async function toVoff(m) {
+interface ViewSession {
+  id: string;
+  myId: string;
+  focus: boolean;
+  retried: boolean;
+  ended: boolean;
+  timer: ReturnType<typeof setTimeout> | undefined;
+  opening: Promise<void> | null;
+  tuneSent: boolean;
+}
+
+const VIEWER_URL = chrome.runtime.getURL('viewer.html');
+const STATE_TEXT: Record<string, string> = { running: '⌛ AI 執行中', permission: '🔔 AI 等待授權', done: '✅ AI 已完成', idle: 'AI 閒置' };
+const END_TEXT: Record<string, string> = { 'ai-ended': 'AI 已結束', replaced: '已被另一台 viewer 取代', 'host-canceled': 'host 端取消了連線' }; // host 結束連線的原因，這幾種都不自動重連
+const ERROR_TEXT: Record<string, string> = { 'ai-idle': 'AI 目前沒有在運作（host 沒有 Claude 分頁群組）', 'no-net': 'host 沒有符合允許網段的位址，無法連線', 'too-big': '連線資料超過同步上限（host 的回應太大）' };
+let vs: ViewSession | null = null;
+let lastStatus = '';
+const vStatus = (t: string) => { if (t !== lastStatus) { lastStatus = t; chrome.storage.local.set({ cg_status: t }); } };
+
+async function toVoff(m: VoffBody) {
   for (let i = 0; i < 10; i++) {
-    try { await ensureOffscreen(); return await chrome.runtime.sendMessage({ target: 'voff', ...m }); } // 每輪都確認文件還在（它可能剛好自己關掉）
+    try { await ensureOffscreen(); return await chrome.runtime.sendMessage({ target: 'voff', ...m } satisfies VoffMsg); } // 每輪都確認文件還在（它可能剛好自己關掉）
     catch { await new Promise((r) => setTimeout(r, 300)); }
   }
   slog('viewer offscreen 沒有回應');
@@ -19,20 +33,20 @@ async function toVoff(m) {
 async function vConnect(auto = false) {
   const prev = vs;
   clearTimeout(prev?.timer);
-  let { deviceId, nets } = await chrome.storage.local.get(['deviceId', 'nets']);
+  let { deviceId, nets } = await chrome.storage.local.get<{ deviceId: string; nets: unknown }>(['deviceId', 'nets']);
   if (!deviceId) { deviceId = crypto.randomUUID(); await chrome.storage.local.set({ deviceId }); }
-  const s = vs = { id: crypto.randomUUID(), myId: deviceId, focus: !auto, retried: auto && !!prev?.retried, ended: false, timer: null, opening: null };
+  const s: ViewSession = vs = { id: crypto.randomUUID(), myId: deviceId, focus: !auto, retried: auto && !!prev?.retried, ended: false, timer: undefined, opening: null, tuneSent: false };
   vStatus('連線中…（約需 10 秒）');
   await toVoff({ type: 'start', id: s.id, nets });
   if (vs === s) s.timer = setTimeout(() => vFail('host 離線或未回應（等了 20 秒）'), 20000);
 }
 
-function vStop(text) { // 使用者這邊的原因（關了檢視頁面、切回 host）：停止連線，也不要自動重連
+function vStop(text: string) { // 使用者這邊的原因（關了檢視頁面、切回 host）：停止連線，也不要自動重連
   if (vs) vs.ended = true;
   vFail(text);
 }
 
-function vFail(text) {
+function vFail(text: string) {
   clearTimeout(vs?.timer);
   vStatus(text);
   chrome.storage.sync.remove([REQ, RES]);
@@ -40,39 +54,41 @@ function vFail(text) {
 }
 
 async function sendTune() { // 把懸浮視窗選的畫面設定送給 host；沒選過就不送，host 用預設值
-  const { tune } = await chrome.storage.local.get('tune');
+  const { tune } = await chrome.storage.local.get<{ tune: Tune }>('tune');
   if (tune) toVoff({ type: 'input', ev: { type: 'tune', ...tune } });
 }
 
-async function showViewer(focus) {
+async function showViewer(focus: boolean) {
   const [t] = await chrome.tabs.query({ url: VIEWER_URL });
   if (!t) { const n = await chrome.tabs.create({ url: VIEWER_URL, active: focus }); if (focus) await chrome.windows.update(n.windowId, { focused: true }); return; }
-  if (!focus) return;
+  if (!focus || t.id == null) return;
   await chrome.tabs.update(t.id, { active: true });
   await chrome.windows.update(t.windowId, { focused: true });
 }
 
 chrome.storage.onChanged.addListener((ch, area) => {
-  const r = area === 'sync' && ch[RES]?.newValue;
+  const r = area === 'sync' && ch[RES]?.newValue as Res | undefined;
   if (!r || !vs || r.to !== vs.myId || r.id !== vs.id) return;
   clearTimeout(vs.timer);
   slog('[viewer] 收到 host 回應', r.error || 'answer');
-  if (r.error) return vFail(ERROR_TEXT[r.error] || 'host 無法建立連線');
+  if (r.error || !r.sdp) return vFail(ERROR_TEXT[r.error ?? ''] || 'host 無法建立連線');
   const s = vs;
   s.timer = setTimeout(() => vFail('host 回應了，但連線建立失敗（等了 15 秒）'), 15000); // 回應之後另起一段，不再沿用 20 秒
   toVoff({ type: 'answer', id: s.id, sdp: r.sdp });
 });
 
 const FROM_VOFF = new Set(['v-offer', 'v-connected', 'v-closed', 'v-pagegone', 'v-netfail']);
-chrome.runtime.onMessage.addListener((m) => {
+chrome.runtime.onMessage.addListener((m: Msg) => {
   if (m.target === 'sw' && m.type === 'v-closed' && !vs) vStatus('連線中斷，請從插件圖示按 Viewer 重試'); // 背景程式重啟後 vs 已遺失，至少讓狀態文字更新
   if (m.target === 'sw' && FROM_VOFF.has(m.type) && m.id !== vs?.id) return; // 不是目前這條連線的訊息
   if (m.target === 'sw' && m.type === 'v-pagegone') return vStop('檢視頁面已關閉，連線已停止');
   if (m.target === 'sw' && m.type === 'v-netfail') return vStop(`連線位址不在允許網段內，已關閉（${m.detail}）`); // 位址不合是設定問題，重試也一樣，不自動重連
-  if (m.target === 'sw' && m.type === 'v-connect') vConnect().catch((e) => vFail('錯誤：' + (e.message || e)));
+  if (m.target === 'sw' && m.type === 'v-connect') vConnect().catch((e) => vFail('錯誤：' + errText(e)));
   if (m.target === 'sw' && m.type === 'v-offer' && vs) {
     if (!m.kept) return vFail('這台沒有符合允許網段的位址，無法連線');
-    chrome.storage.sync.set({ [REQ]: { id: vs.id, from: vs.myId, t: Date.now(), sdp: m.sdp } }).then(() => slog('[viewer] 連線請求已寫入 sync'));
+    const req = { id: vs.id, from: vs.myId, t: Date.now(), sdp: m.sdp } satisfies Req;
+    slog('[viewer] 連線請求字串化長度', JSON.stringify({ [REQ]: req }).length); // 同步單筆上限約 8 KB，按字串化後算
+    chrome.storage.sync.set({ [REQ]: req }).then(() => slog('[viewer] 連線請求已寫入 sync'), (e) => { slog('[viewer] 連線請求寫入失敗：', errText(e)); vFail('連線資料超過同步上限，無法連線'); });
   }
   if (m.target === 'sw' && m.type === 'v-connected' && vs) {
     clearTimeout(vs.timer);

@@ -1,0 +1,5 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": { "types": ["node", "chrome"], "noEmit": true, "allowImportingTsExtensions": true, "rootDir": ".." },
+  "include": [".", "../proto-video/run.ts", "../proto-video/shot.ts"]
+}

@@ -1,0 +1,23 @@
+<!doctype html><meta charset="utf-8"><title>負載測試頁</title>
+<style>html,body{margin:0;height:100%;font:48px ui-monospace,monospace;background:#fff}#t{position:fixed;left:16px;top:48px}canvas{width:100%;height:100%;display:block}</style>
+<canvas id="c"></canvas><div id="t"></div>
+<script>
+// 時鐘加持續重繪的色塊：每個影格都有變化。window.__ev 記錄收到的輸入，給端對端測試讀。
+// 最上面 40px 是條碼：白、黑兩格定位，接著 32 格是 Date.now() 的低 32 位元，給 proto-video 量從繪製到解碼的延遲
+window.__ev = [];
+for (const k of ['click', 'keydown']) addEventListener(k, (e) => __ev.push(k + ':' + (e.key || Math.round(e.clientX) + ',' + Math.round(e.clientY))));
+const c = document.getElementById('c'), g = c.getContext('2d'), t = document.getElementById('t');
+let n = 0;
+function draw() {
+  if (c.width !== innerWidth || c.height !== innerHeight) { c.width = innerWidth; c.height = innerHeight; }
+  n++;
+  for (let i = 0; i < 24; i++) { g.fillStyle = `hsl(${(n * 7 + i * 53) % 360} 80% 60%)`; g.fillRect((i % 6) * c.width / 6, 120 + ((i / 6) | 0) * (c.height - 120) / 4, c.width / 6, (c.height - 120) / 4); }
+  g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, 120);
+  const now = Date.now() % 2 ** 32, w = c.width / 34;
+  g.fillStyle = '#000';
+  for (let i = 1; i < 34; i++) if (i === 1 || Math.floor(now / 2 ** (33 - i)) % 2) g.fillRect(i * w, 0, w + 1, 40);
+  t.textContent = new Date().toISOString().slice(11, 23) + ' #' + n;
+  if (!location.search.includes('static')) requestAnimationFrame(draw); // ?static：只畫一次，測靜止頁面
+}
+draw();
+</script>

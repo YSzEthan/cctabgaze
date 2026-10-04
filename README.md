@@ -18,8 +18,9 @@ WebRTC 直連（Tailscale）◄══════ 畫面 ═══════�
 
 1. 兩台 Chrome 登入同一個 Google 帳號並開啟同步。
 2. 兩台都在 Tailscale 網路內（或在你另外設定的允許網段內，見「允許的網段」）。
-3. `chrome://extensions` → 開啟開發人員模式 → 載入未封裝項目 → 選 `extension/`。兩台的插件 ID 都是 `offomejgoflopledfnhhkdldnhfejgjl`（manifest 固定了 `key`，`storage.sync` 依 ID 分區，ID 不同就不會互通）。
-4. 預設角色是 host，遠端那台不用設定。本機點插件圖示，在懸浮視窗按「Viewer」。
+3. 編譯：`npm install && npm run build`（原始碼是 `src/` 的 TypeScript，編譯結果輸出到 `extension/`，需要 Node.js）。之後每次更新原始碼都要重新 build，並在 `chrome://extensions` 按重新載入。
+4. `chrome://extensions` → 開啟開發人員模式 → 載入未封裝項目 → 選 `extension/`。兩台的插件 ID 都是 `offomejgoflopledfnhhkdldnhfejgjl`（manifest 固定了 `key`，`storage.sync` 依 ID 分區，ID 不同就不會互通）。
+5. 預設角色是 host，遠端那台不用設定。本機點插件圖示，在懸浮視窗按「Viewer」。
 
 ## 使用
 
@@ -38,7 +39,14 @@ WebRTC 直連（Tailscale）◄══════ 畫面 ═══════�
 
 ## 畫面設定
 
-懸浮視窗的「畫面設定」可選品質（30／50／75／90）、速率上限（5／10／15 fps／最快）、格式（JPEG／WebP／PNG）。設定存在 viewer 這台，連線後經 DataChannel 送給 host，連線中改了馬上生效；host 只接受這幾個固定選項，其餘用預設（品質 50、最快、JPEG）。PNG 無損但檔案大、較慢；WebP 與 JPEG 的取捨見「效能」。
+懸浮視窗的「畫面設定」，設定存在 viewer 這台，連線後經 DataChannel 送給 host，連線中改了馬上生效（不用重連）；host 只接受固定選項，其餘用預設。
+
+- **傳輸**：
+  - **視訊（預設）**：host 照樣用 debugger 截圖（固定 JPEG 品質 90），但不逐張送圖片，而是解碼後餵進 H264 視訊編碼器，經 WebRTC 視訊軌傳送。頻寬約為逐張 JPEG 的 1/4 到 1/8。
+  - **圖片（備案）**：逐張 JPEG／WebP／PNG 走 DataChannel，下面的品質與格式只在這個模式有效。
+  - 協商不到視訊（對方是舊版、瀏覽器沒有 H264、視訊與資料不在同一條連線）或 host 本機編碼壞掉時，自動退回圖片。
+- **品質**（30／50／75／90）、**格式**（JPEG／WebP／PNG）：僅圖片模式。
+- **速率**：上限 5／10／15／25 fps 或不限（預設不限）。上限是指兩張畫面之間的最短間隔。
 
 ## 允許的網段
 
@@ -47,7 +55,7 @@ WebRTC 直連（Tailscale）◄══════ 畫面 ═══════�
 - **設定存在各機器本機，不同步**，所以兩台都要各設一次。
 - 過濾分兩層：SDP 裡不在網段內的 candidate 全部丟掉；連上後再讀實際選用的兩端位址，任一邊不在網段內（或讀不到）就關閉連線。
 - 位址必須是乾淨的 IP 字面值，主機名、`.local`、IPv4-mapped IPv6 一律拒絕。
-- 解析邏輯有測試：`node test/rtc.test.js`。
+- 解析邏輯有測試：`npm test`。
 
 ## 安全
 
@@ -71,15 +79,28 @@ WebRTC 直連（Tailscale）◄══════ 畫面 ═══════�
 - Chrome 自己的介面（原生右鍵選單、`<select>` 下拉、檔案選擇、`alert`／`confirm`、密碼提示）截不到，也點不到，可能擋住後續輸入。
 - viewer 的 Chrome 會先吃掉部分快捷鍵（Cmd+W、Cmd+T 等）。
 - 你和 AI 可以同時操作同一個分頁，沒有互斥。
-- 沒有聲音。畫面是連續截圖，不是影片。
+- 沒有聲音。視訊模式的來源仍是連續截圖（編碼成視訊串流傳送），不是真正的螢幕錄影，fps 受截圖速度限制。
+- 視訊模式的中繼資料（目前是哪個分頁）走 DataChannel，比視訊畫面早到幾十毫秒；換分頁的瞬間點擊可能落到新分頁。
+- 視訊模式要求兩端的 Chrome 有 H264（硬體編碼只在 H264 的特定參數上，其他參數會退回慢一倍的軟體編碼）。在 Apple M4 以外的機器上沒測過。
 
 ## 效能（實測）
 
-- 截圖間隔：畫面有變化時，上一張**確認送達**後 40 ms 內再截下一張（送達前不截新的，沒有備援計時器）；沒變化時每 500 ms 檢查一次並送 `same`。
+- 截圖間隔（圖片模式與視訊模式相同）：畫面有變化時，上一張**確認送達**後依「速率」設定再截下一張（送達前不截新的，沒有備援計時器）；沒變化時每 500 ms 檢查一次並送 `same`。
 - host 螢幕鎖定、負載測試頁（時鐘加持續重繪的色塊，每張約 63 KB）：剛連上約 14 到 15 fps，之後會隨 host 的系統負載降到約 9 到 11 fps（開著 macOS 螢幕共享時最明顯）；延遲額外約 +30 到 +50 ms。右上角會顯示近 5 秒的 fps 與額外延遲。間隔下限從 100 ms 降到 40 ms 前是約 9.7 fps。
 - 單張成本約：截圖 20 到 45 ms、送達 45 到 70 ms。**瓶頸在頁面渲染，不在 JPEG 編碼或頻寬**：降品質到 35、開 `optimizeForSpeed` 實測都沒有變快，所以維持品質 50；也因此縮小尺寸不會更快。
 - 不用 CDP `Page.startScreencast`：host 螢幕鎖定、頁面不可見時，它一張畫面都不會產生（實測 0 張），而 `Page.captureScreenshot` 不受影響。
+- 不用 `chrome.tabCapture` 加 WebRTC 視訊軌：實測約 59 fps（截圖約 22 fps，同一台機器），但它要求有人先在那個分頁點過插件圖示，host 沒人在場就開不了；只有用 `--allowlisted-extension-id` 啟動 Chrome 才能繞過。各編碼的數字見 `proto-video/README.md`。
 - 不用 `clip`＋`scale` 縮小截圖：它會暫時改頁面的模擬尺寸，可能干擾 AI 自己的截圖與點擊。
+
+## 開發
+
+原始碼在 `src/`（TypeScript，ES modules），`tsc` 逐檔編譯到 `extension/`，沒有打包工具。`extension/` 裡的 `.js` 是編譯結果，不進版本控制；`manifest.json` 與 `.html` 才是手寫的。
+
+- `npm run build`：編譯。`npm run watch`：存檔就編譯。
+- `npm run check`：只做型別檢查（含測試）。
+- `npm test`：位址與網段解析的單元測試（Node 直接跑 TypeScript，不用先編譯）。
+- `npm run e2e`：端對端測試。用本機的 Chrome 開一個全新設定檔（會跳出一個視窗），讓插件在同一個 Chrome 裡自己連自己，檢查畫面、滑鼠鍵盤、分頁列、結束連線。
+- 各執行環境之間的訊息格式都定義在 `src/protocol.ts`，欄位或 `type` 打錯會在編譯時報錯。viewer 經 DataChannel 送來的資料在 host 端的型別是 `unknown`，必須經過 `input()`、`tune()`、`doControl()` 的檢查才能用。
 
 ## 歷史
 

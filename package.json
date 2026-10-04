@@ -1,0 +1,18 @@
+{
+  "name": "cctabgaze",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "check": "tsc --noEmit && tsc -p test",
+    "test": "node test/rtc.test.ts",
+    "e2e": "tsc && node test/e2e.ts"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.3.4",
+    "@types/node": "^26.6.4",
+    "puppeteer-core": "^25.12.0",
+    "typescript": "^7.0.2"
+  }
+}

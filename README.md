@@ -19,11 +19,11 @@ WebRTC 直連（Tailscale）◄══════ 畫面 ═══════�
 1. 兩台 Chrome 登入同一個 Google 帳號並開啟同步。
 2. 兩台都在 Tailscale 網路內。
 3. `chrome://extensions` → 開啟開發人員模式 → 載入未封裝項目 → 選 `extension/`。兩台的插件 ID 都是 `offomejgoflopledfnhhkdldnhfejgjl`（manifest 固定了 `key`，`storage.sync` 依 ID 分區，ID 不同就不會互通）。
-4. 預設角色是 host，遠端那台不用設定。本機點插件圖示，在懸浮視窗按「Viewer」（會開啟檢視頁面）。
+4. 預設角色是 host，遠端那台不用設定。本機點插件圖示，在懸浮視窗按「Viewer」。
 
 ## 使用
 
-本機點插件圖示 → Viewer → 在檢視頁面按「連線」。約 10 秒內出現畫面。沒有 AI 在運作時會顯示「AI 目前沒有在運作」。
+本機點插件圖示 → Viewer，立刻連線。連線在背景跑，狀態顯示在懸浮視窗；第一張畫面到了才會開出檢視分頁，連線成功前不會有任何分頁。約 10 秒內出現畫面。沒有 AI 在運作時會顯示「AI 目前沒有在運作」。
 
 出問題時按「診斷紀錄」，內容同時包含 host 背景程式與這個頁面的紀錄。
 

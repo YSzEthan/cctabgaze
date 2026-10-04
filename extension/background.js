@@ -139,3 +139,5 @@ chrome.runtime.onMessage.addListener((m) => {
   if (m.type === 'ready' && session) schedule(fastGap(session)); // ready 只會在送出畫面後出現
   if (m.type === 'closed') endSession('viewer-left');
 });
+
+importScripts('viewer-bg.js');

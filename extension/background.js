@@ -1,5 +1,6 @@
 // cctabgaze host：被動待命。viewer 寫入 cg_req → 這裡被同步事件叫醒 → 有 Claude 分頁群組才回應
-// 整份程式只呼叫 chrome.debugger 的 attach / detach / sendCommand，指令只有 Page.captureScreenshot 與 input() 裡固定的三種 Input.*
+// chrome.debugger 只用 attach / detach / sendCommand，指令只有 Page.captureScreenshot 與 input() 裡固定的三種 Input.*；
+// 分頁控制（網址、上一頁、切換、開啟、關閉）只在 control() 裡，且只作用在 Claude 分頁群組內的分頁
 const REQ = 'cg_req', RES = 'cg_res';
 const MIN_INTERVAL = 500, FAST_INTERVAL = 100, INPUT_BOOST = 2000, FALLBACK = 3000, SHOT_TIMEOUT = 5000, REQ_TTL = 60000;
 const AI_TITLES = new Set(['Claude', 'Claude (MCP)']);
@@ -28,20 +29,30 @@ async function findClaudeGroups() {
 }
 const stateOf = (title) => STATES[((title || '').match(PREFIX) || [])[1]] || 'idle';
 
-async function pickTab(groups) {
+const groupTabs = async (groups) => (await Promise.all(groups.map((g) => chrome.tabs.query({ groupId: g.id })))).flat();
+
+function pickTab(tabs) { // 自動模式：最近有動靜的網頁分頁
   let best = null, bestAt = -1;
-  for (const g of groups) {
-    for (const t of await chrome.tabs.query({ groupId: g.id })) {
-      if (!/^https?:/.test(t.url || '')) continue;
-      const at = Math.max(t.lastAccessed || 0, activity.get(t.id) || 0);
-      if (at > bestAt) { best = t; bestAt = at; }
-    }
+  for (const t of tabs) {
+    if (!/^https?:/.test(t.url || '')) continue;
+    const at = Math.max(t.lastAccessed || 0, activity.get(t.id) || 0);
+    if (at > bestAt) { best = t; bestAt = at; }
   }
   return best;
 }
 
+// 分頁清單：有變才送給 viewer（標題、網址截斷，避免 data: 網址塞爆 DataChannel）
+function sendTabs(s, tabs, cur) {
+  const msg = { type: 'tabs', cur: cur?.id ?? null, pinned: s.pinnedTabId != null,
+    tabs: tabs.slice(0, 40).map((t) => ({ id: t.id, title: str(t.title, 80), url: str(t.url, 2048) })) };
+  const json = JSON.stringify(msg);
+  if (json === s.lastTabs) return;
+  s.lastTabs = json;
+  toOff({ type: 'ctl', msg });
+}
+
 // ---- 連線階段 ----
-let session = null; // { req, attachedTabId, lastData, lastStepAt, lastInputAt, view }
+let session = null; // { req, attachedTabId, lastData, lastStepAt, lastInputAt, view, pinnedTabId(null=自動跟隨 AI), cur(這輪選中的分頁), tabs, lastTabs }
 let timer = null;
 const toOff = (m) => chrome.runtime.sendMessage({ target: 'offscreen', ...m }).catch(() => {});
 
@@ -87,7 +98,11 @@ async function step() {
   try {
     const groups = await findClaudeGroups();
     if (!groups.length) return endSession('ai-ended');
-    const tab = await pickTab(groups);
+    const tabs = s.tabs = await groupTabs(groups);
+    if (!tabs.some((t) => t.id === s.pinnedTabId)) s.pinnedTabId = null; // 釘選的分頁不在了，回到自動
+    const tab = tabs.find((t) => t.id === s.pinnedTabId) || pickTab(tabs);
+    s.cur = tab?.id ?? null;
+    sendTabs(s, tabs, tab); // 在 attach 之前送：釘到截不到的頁面時清單仍送得出，才切得走
     if (!tab) toOff({ type: 'ctl', msg: { type: 'error', message: 'Claude 分頁群組裡沒有可截圖的網頁分頁' } });
     else {
       s.view = { w: tab.width, h: tab.height };
@@ -96,7 +111,7 @@ async function step() {
       const data = await shot(tab.id);
       if (session !== s) return;
       if (data === s.lastData) toOff({ type: 'ctl', msg: { type: 'same', state } });
-      else { s.lastData = data; sentFrame = true; toOff({ type: 'frame', b64: data, title: tab.title || '', url: tab.url || '', state, tabId: tab.id, ts: Date.now() }); }
+      else { s.lastData = data; sentFrame = true; toOff({ type: 'frame', b64: data, state, tabId: tab.id, ts: Date.now() }); }
     }
   } catch (e) {
     toOff({ type: 'ctl', msg: { type: 'error', message: String(e.message || e) } });
@@ -144,6 +159,46 @@ function input(ev) {
   chrome.debugger.sendCommand({ tabId: s.attachedTabId }, method, params).catch(() => {}); // 不等回應；隱藏分頁可能不回
 }
 
+// ---- viewer 的分頁控制：和 input() 並列的關口。分流在 input() 的「已接上分頁」檢查之前，截不到的頁面也導得出來 ----
+const fixUrl = (u) => { // 不像 scheme:// 也不是 about: 就補 https://，否則 Chrome 會當成擴充功能內的相對路徑
+  const t = str(u, 2048).trim();
+  return !t || /^([a-z][a-z0-9+.-]*:\/\/|about:)/i.test(t) ? t : 'https://' + t;
+};
+let controlQ = Promise.resolve(); // 串行化：連按兩次關閉不能都看到「還剩兩個」
+const control = (ev) => { controlQ = controlQ.then(() => doControl(ev)).catch((e) => slog('控制失敗：', ev?.type, ev?.a, e.message || e)); };
+
+async function doControl(ev) {
+  const s = session;
+  if (!s || !ev) return;
+  const id = ev.tabId;
+  if (ev.type === 'nav') {
+    if (s.cur == null || id !== s.cur) return slog('導覽被丟棄：viewer 的分頁', id, '≠ 目前', s.cur); // 只作用在目前截的分頁；viewer 看的若是別的分頁就丟棄
+    if (ev.a === 'go') { const url = fixUrl(ev.url); if (!url) return; await chrome.tabs.update(id, { url }); s.pinnedTabId = id; } // 釘住它，否則導向非網頁後自動模式會跳走
+    else if (ev.a === 'back') await chrome.tabs.goBack(id);
+    else if (ev.a === 'forward') await chrome.tabs.goForward(id);
+    else if (ev.a === 'reload') await chrome.tabs.reload(id);
+  } else if (ev.type === 'tab') {
+    if (ev.a === 'auto') s.pinnedTabId = null;
+    else if (ev.a === 'open') {
+      const base = s.tabs.find((t) => t.id === s.cur) || s.tabs[0];
+      if (!base) return;
+      const t = await chrome.tabs.create({ windowId: base.windowId, index: base.index + 1, url: 'about:blank', active: false });
+      try { await chrome.tabs.group({ tabIds: t.id, groupId: base.groupId }); }
+      catch { await chrome.tabs.remove(t.id).catch(() => {}); return; } // 不留群組外的孤兒分頁
+      s.pinnedTabId = t.id;
+    } else if (Number.isInteger(id) && s.tabs.some((t) => t.id === id)) { // 只認這一輪 Claude 群組裡的分頁
+      if (ev.a === 'select') s.pinnedTabId = id;
+      if (ev.a === 'close') {
+        const gid = s.tabs.find((t) => t.id === id).groupId;
+        if (s.tabs.filter((t) => t.groupId === gid).length < 2) return; // 關光群組會被當成 AI 結束
+        s.tabs = s.tabs.filter((t) => t.id !== id);
+        await chrome.tabs.remove(id);
+      }
+    }
+  } else return;
+  s.lastInputAt = Date.now(); // 沿用 INPUT_BOOST，下一輪很快生效；不另外踢 step()，避免兩個 step 並行互拔 debugger
+}
+
 // ---- 被動回應 viewer 的請求 ----
 const reply = (req, body) => chrome.storage.sync.set({ [RES]: { to: req.from, id: req.id, t: Date.now(), ...body } });
 
@@ -155,7 +210,7 @@ async function onRequest(req) {
   slog('收到連線請求', req.id.slice(0, 8), '，延遲約', age, 'ms');
   if (!(await findClaudeGroups()).length) { await reply(req, { error: 'ai-idle' }); return slog('沒有 Claude 分頁群組，拒絕連線'); }
   await endSession('replaced');
-  session = { req, attachedTabId: null, lastData: null, lastStepAt: 0, lastInputAt: 0, view: null };
+  session = { req, attachedTabId: null, lastData: null, lastStepAt: 0, lastInputAt: 0, view: null, pinnedTabId: null, cur: null, tabs: [], lastTabs: null };
   await ensureOffscreen();
   for (let i = 0; i < 5; i++) {
     try { await chrome.runtime.sendMessage({ target: 'offscreen', type: 'offer', sdp: req.sdp, id: req.id }); return; }
@@ -174,7 +229,7 @@ chrome.tabGroups.onRemoved.addListener(async () => { if (session && !(await find
 chrome.runtime.onMessage.addListener((m) => {
   if (m.target !== 'sw') return;
   if (m.type === 'log') slog('[offscreen]', m.line);
-  if (m.type === 'input') input(m.ev);
+  if (m.type === 'input') (m.ev?.type === 'nav' || m.ev?.type === 'tab' ? control : input)(m.ev);
   if (m.type === 'answer' && session && m.id === session.req.id) reply(session.req, { sdp: m.sdp }).then(() => slog('answer 已寫入 sync'));
   if (m.type === 'open' && session) { slog('DataChannel 開啟，開始傳畫面'); schedule(0); }
   if (m.type === 'ready' && session) schedule(fastGap(session)); // ready 只會在送出畫面後出現

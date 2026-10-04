@@ -2,11 +2,16 @@
 // 畫面往這裡來；檢視頁面的滑鼠鍵盤事件經這裡送給 host（host 在 input() 逐項檢查後才執行）
 const vsend = (m) => chrome.runtime.sendMessage({ target: 'sw', ...m }).catch(() => {});
 const vlog = (...a) => vsend({ type: 'log', line: '[viewer] ' + a.join(' ') });
-const emit = (m) => { vlast = m; chrome.runtime.sendMessage({ target: 'viewer', ...m }).catch(() => {}); };
-let vpc = null, vdc = null, vcur = null, vlast = null, vurls = [];
+let vpc = null, vdc = null, vcur = null, vlast = {}, vurls = []; // vlast：各類訊息最近一筆，檢視頁面晚開時補送
+const emit = (m) => {
+  if (m.type !== 'same') vlast[m.type] = m;
+  if (m.type === 'frame') delete vlast.error; // 新畫面取代舊的錯誤，反之亦然
+  if (m.type === 'error') delete vlast.frame;
+  chrome.runtime.sendMessage({ target: 'viewer', ...m }).catch(() => {});
+};
 
 function vstop() {
-  const p = vpc; vpc = null; vdc = null; vcur = null;
+  const p = vpc; vpc = null; vdc = null; vcur = null; vlast = {};
   if (p) { p.onconnectionstatechange = null; p.close(); }
 }
 
@@ -42,13 +47,14 @@ function onData(e) {
   if (m.type === 'same') emit({ type: 'same', state: m.state });
   if (m.type === 'error') emit({ type: 'error', message: m.message });
   if (m.type === 'end') emit({ type: 'end' });
+  if (m.type === 'tabs' && Array.isArray(m.tabs)) emit({ type: 'tabs', cur: m.cur, pinned: m.pinned, tabs: m.tabs });
 }
 
 function showFrame(m, parts) {
   const src = URL.createObjectURL(new Blob(parts, { type: 'image/jpeg' }));
   vurls.push(src);
   if (vurls.length > 4) URL.revokeObjectURL(vurls.shift());
-  emit({ type: 'frame', src, title: m.title, url: m.url, state: m.state, ts: m.ts, tabId: m.tabId });
+  emit({ type: 'frame', src, state: m.state, ts: m.ts, tabId: m.tabId });
 }
 
 chrome.runtime.onMessage.addListener((m) => {
@@ -57,5 +63,5 @@ chrome.runtime.onMessage.addListener((m) => {
   if (m.type === 'answer' && vpc) vpc.setRemoteDescription({ type: 'answer', sdp: keepTailscaleOnly(m.sdp).sdp }).catch((e) => vlog('answer 失敗:', e.message));
   if (m.type === 'stop') vstop();
   if (m.type === 'input' && vdc?.readyState === 'open') vdc.send(JSON.stringify(m.ev));
-  if (m.type === 'resend' && vlast) emit(vlast); // 檢視頁面是第一張畫面到了才開的，補送最近一筆
+  if (m.type === 'resend') Object.values(vlast).forEach(emit); // 檢視頁面是第一張畫面到了才開的，補送
 });

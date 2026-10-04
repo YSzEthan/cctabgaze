@@ -43,7 +43,7 @@ async function answer(m) {
 function sendFrame(m) {
   const u = Uint8Array.from(atob(m.b64), (c) => c.charCodeAt(0));
   const CH = Math.min(60000, pc.sctp?.maxMessageSize || 60000);
-  ch.send(JSON.stringify({ type: 'h', chunks: Math.ceil(u.length / CH), title: m.title, url: m.url, state: m.state, tabId: m.tabId, ts: m.ts }));
+  ch.send(JSON.stringify({ type: 'h', chunks: Math.ceil(u.length / CH), state: m.state, tabId: m.tabId, ts: m.ts }));
   for (let i = 0; i < u.length; i += CH) ch.send(u.subarray(i, i + CH));
   const done = () => { clearTimeout(readyTimer); ch.onbufferedamountlow = null; send({ type: 'ready' }); };
   ch.onbufferedamountlow = done;

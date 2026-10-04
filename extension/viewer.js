@@ -12,15 +12,16 @@ function onMsg(m) {
   if (m.target !== 'viewer') return;
   if (m.type === 'frame') {
     $('img').src = m.src; $('img').hidden = false; $('msg').hidden = true;
-    $('title').textContent = m.title; $('url').textContent = m.url;
     curTab = m.tabId;
+    setLocked(false);
     lastFrameAt = Date.now(); mode = 'frame';
     // 單程延遲含兩台時鐘誤差；減掉目前看過的最小值，剩下的就是排隊造成的額外延遲
     const lat = lastFrameAt - m.ts; minLat = Math.min(minLat, lat); extraLat = lat - minLat; frameTimes.push(lastFrameAt);
   }
   if (m.type === 'same') mode = 'same';
-  if (m.type === 'error') { mode = 'error'; $('img').hidden = true; $('msg').hidden = false; $('msg').textContent = m.message; $('title').textContent = '無法顯示'; $('url').textContent = ''; }
-  if (m.type === 'end') { mode = 'end'; curTab = null; }
+  if (m.type === 'error') { mode = 'error'; $('img').hidden = true; $('msg').hidden = false; $('msg').textContent = m.message; }
+  if (m.type === 'end') { mode = 'end'; curTab = null; setLocked(true); }
+  if (m.type === 'tabs') renderTabs(m);
 }
 chrome.runtime.onMessage.addListener(onMsg);
 chrome.runtime.sendMessage({ target: 'voff', type: 'resend' }).catch(() => {}); // 這個分頁是第一張畫面到了才開的，補收最近一筆
@@ -93,3 +94,47 @@ for (const a of ['down', 'up']) kb.addEventListener('key' + a, (e) => {
 });
 kb.addEventListener('compositionend', (e) => { if (e.data) sendInput({ type: 'text', text: e.data }); kb.value = ''; });
 kb.addEventListener('paste', (e) => { e.preventDefault(); const t = e.clipboardData.getData('text'); if (t) sendInput({ type: 'text', text: t }); });
+
+// ---- 網址列與分頁列：控制 host 的 Claude 群組分頁。host 才是真正的關口，這裡送的 tabId 不會被改寫 ----
+const sendCtl = (ev) => chrome.runtime.sendMessage({ target: 'voff', type: 'input', ev }).catch(() => {});
+const addr = $('addr');
+let info = { tabs: [], cur: null, pinned: false };
+const setLocked = (on) => { $('ctl').inert = $('tabs').inert = on; }; // AI 結束後停用
+
+function renderTabs(m) {
+  info = m;
+  const list = $('tablist');
+  list.replaceChildren(...m.tabs.map((t) => {
+    const el = document.createElement('div'), name = document.createElement('span'), x = document.createElement('span');
+    el.className = 'tab' + (t.id === m.cur ? ' on' : ''); el.dataset.id = t.id;
+    name.className = 'name'; name.textContent = t.title || t.url || '(無標題)'; name.title = t.url;
+    x.className = 'x'; x.textContent = '×'; x.dataset.close = '1';
+    el.append(name, x);
+    return el;
+  }));
+  list.querySelector('.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  $('auto').hidden = !m.pinned;
+  const cur = m.tabs.find((t) => t.id === m.cur);
+  document.title = (cur?.title || 'cctabgaze');
+  if (document.activeElement !== addr) addr.value = cur?.url || ''; // 使用者正在輸入時不蓋掉
+}
+
+// 按鈕不拿走焦點，按完上一頁還能直接打字；分頁列在 mousedown 處理（標題一變整列重繪，click 會被吃掉）
+for (const b of document.querySelectorAll('button')) b.addEventListener('mousedown', (e) => e.preventDefault());
+$('tablist').addEventListener('mousedown', (e) => {
+  const el = e.target.closest('.tab');
+  if (!el) return;
+  e.preventDefault(); kb.focus();
+  sendCtl({ type: 'tab', a: e.target.dataset.close ? 'close' : 'select', tabId: Number(el.dataset.id) });
+});
+const nav = (a) => info.cur != null && sendCtl({ type: 'nav', a, tabId: info.cur });
+$('back').onclick = () => nav('back');
+$('fwd').onclick = () => nav('forward');
+$('reload').onclick = () => nav('reload');
+$('newtab').onclick = () => sendCtl({ type: 'tab', a: 'open' });
+$('auto').onclick = () => sendCtl({ type: 'tab', a: 'auto' });
+addr.addEventListener('keydown', (e) => {
+  if (e.isComposing || e.keyCode === 229) return; // 注音選字的 Enter 不送出
+  if (e.key === 'Enter') { if (info.cur != null) sendCtl({ type: 'nav', a: 'go', url: addr.value, tabId: info.cur }); kb.focus(); }
+  if (e.key === 'Escape') { addr.value = info.tabs.find((t) => t.id === info.cur)?.url || ''; kb.focus(); }
+});

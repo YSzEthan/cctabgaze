@@ -4,7 +4,8 @@ const REQ = 'cg_req', RES = 'cg_res';
 const STATE_TEXT = { running: '⌛ AI 執行中', permission: '🔔 AI 等待授權', done: '✅ AI 已完成', idle: 'AI 閒置' };
 const ROLE_TEXT = { host: '這台是 host（待命：有 Claude 分頁時才回應連線請求）', viewer: '這台是 viewer' };
 let pc = null, dc = null, timeoutT = null, curId = null, myId = null, cur = null;
-let lastFrameAt = 0, mode = 'wait', aiState = '', imgUrl = null, retried = false, ended = false, minLat = Infinity, extraLat = 0;
+const fps = () => { const now = Date.now(); frameTimes = frameTimes.filter((t) => now - t < 5000); return (frameTimes.length / 5).toFixed(1); };
+let lastFrameAt = 0, mode = 'wait', aiState = '', imgUrl = null, retried = false, ended = false, minLat = Infinity, extraLat = 0, frameTimes = [];
 
 const plog = [];
 const dlog = (...a) => { plog.push(`[${new Date().toISOString().slice(11, 23)}] ` + a.join(' ')); };
@@ -93,7 +94,7 @@ function showFrame(m, parts) {
   aiState = STATE_TEXT[m.state] || '';
   lastFrameAt = Date.now(); mode = 'frame';
   // 單程延遲含兩台時鐘誤差；減掉目前看過的最小值，剩下的就是排隊造成的額外延遲
-  const lat = lastFrameAt - m.ts; minLat = Math.min(minLat, lat); extraLat = lat - minLat;
+  const lat = lastFrameAt - m.ts; minLat = Math.min(minLat, lat); extraLat = lat - minLat; frameTimes.push(lastFrameAt);
   setStatus(aiState);
 }
 
@@ -114,7 +115,7 @@ function onData(e) {
 setInterval(() => {
   if (!lastFrameAt || mode === 'end') return;
   const s = Math.round((Date.now() - lastFrameAt) / 1000);
-  $('age').textContent = mode === 'same' ? `畫面未變動（${s} 秒）` : `${s} 秒前更新（延遲 +${extraLat}ms）`;
+  $('age').textContent = mode === 'same' ? `畫面未變動（${s} 秒）` : `${s} 秒前更新（延遲 +${extraLat}ms，${fps()} fps）`;
 }, 500);
 
 $('connect').onclick = () => connect().catch((e) => { dlog('錯誤', e.message || e); idle('錯誤：' + (e.message || e)); });

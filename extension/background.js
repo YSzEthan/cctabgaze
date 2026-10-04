@@ -1,7 +1,7 @@
 // cctabgaze host：被動待命。viewer 寫入 cg_req → 這裡被同步事件叫醒 → 有 Claude 分頁群組才回應
 // 整份程式只呼叫 chrome.debugger 的 attach / detach / sendCommand('Page.captureScreenshot')
 const REQ = 'cg_req', RES = 'cg_res';
-const MIN_INTERVAL = 500, FALLBACK = 3000, SHOT_TIMEOUT = 5000, REQ_TTL = 60000;
+const MIN_INTERVAL = 500, FAST_INTERVAL = 100, FALLBACK = 3000, SHOT_TIMEOUT = 5000, REQ_TTL = 60000;
 const AI_TITLES = new Set(['Claude', 'Claude (MCP)']);
 const PREFIX = /^(⌛|🔔|✅)\s*/;
 const STATES = { '⌛': 'running', '🔔': 'permission', '✅': 'done' };
@@ -58,6 +58,7 @@ async function release() {
   session.attachedTabId = null; session.lastData = null;
   try { await chrome.debugger.detach({ tabId: t }); } catch {}
 }
+const fastGap = (s) => Math.max(0, FAST_INTERVAL - (Date.now() - s.lastStepAt));
 chrome.debugger.onDetach.addListener((src) => { if (session && src.tabId === session.attachedTabId) { session.attachedTabId = null; session.lastData = null; } });
 
 async function endSession(reason) {
@@ -90,9 +91,9 @@ async function step() {
     if (!tab) toOff({ type: 'ctl', msg: { type: 'error', message: 'Claude 分頁群組裡沒有可截圖的網頁分頁' } });
     else {
       if (s.attachedTabId !== tab.id) { await release(); await chrome.debugger.attach({ tabId: tab.id }, '1.3'); s.attachedTabId = tab.id; }
+      const state = stateOf((groups.find((g) => g.id === tab.groupId) || groups[0]).title);
       const data = await shot(tab.id);
       if (session !== s) return;
-      const state = stateOf((groups.find((g) => g.id === tab.groupId) || groups[0]).title);
       if (data === s.lastData) toOff({ type: 'ctl', msg: { type: 'same', state } });
       else { s.lastData = data; sentFrame = true; toOff({ type: 'frame', b64: data, title: tab.title || '', url: tab.url || '', state, tabId: tab.id, ts: Date.now() }); }
     }
@@ -100,7 +101,7 @@ async function step() {
     toOff({ type: 'ctl', msg: { type: 'error', message: String(e.message || e) } });
     await release();
   }
-  if (session === s) schedule(sentFrame ? FALLBACK : MIN_INTERVAL); // 送了畫面就等 offscreen 回報「送完了」
+  if (session === s) schedule(sentFrame ? FALLBACK : MIN_INTERVAL); // 送了畫面就等 offscreen 回報「送完了」，再只等 FAST_INTERVAL
 }
 
 // ---- 被動回應 viewer 的請求 ----
@@ -135,6 +136,6 @@ chrome.runtime.onMessage.addListener((m) => {
   if (m.type === 'log') slog('[offscreen]', m.line);
   if (m.type === 'answer' && session && m.id === session.req.id) reply(session.req, { sdp: m.sdp }).then(() => slog('answer 已寫入 sync'));
   if (m.type === 'open' && session) { slog('DataChannel 開啟，開始傳畫面'); schedule(0); }
-  if (m.type === 'ready' && session) schedule(Math.max(0, MIN_INTERVAL - (Date.now() - session.lastStepAt)));
+  if (m.type === 'ready' && session) schedule(fastGap(session)); // ready 只會在送出畫面後出現
   if (m.type === 'closed') endSession('viewer-left');
 });

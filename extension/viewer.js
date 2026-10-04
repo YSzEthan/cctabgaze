@@ -1,5 +1,6 @@
 // 檢視頁面：顯示畫面，並把這裡的滑鼠鍵盤事件經 offscreen 送給 host。連線在 offscreen 跑，第一張畫面到了背景程式才開這個分頁
 const $ = (id) => document.getElementById(id);
+chrome.runtime.connect({ name: 'viewer-page' }).onDisconnect.addListener(() => void chrome.runtime.lastError); // 生命線：這個頁面一關，viewer 的連線就停止
 let curTab = null; // 目前畫面屬於 host 的哪個分頁；輸入要帶上它，host 發現已經換分頁就丟棄
 let lastFrameAt = 0, mode = 'wait', minLat = Infinity, extraLat = 0, frameTimes = [];
 const fps = () => { const now = Date.now(); frameTimes = frameTimes.filter((t) => now - t < 5000); return (frameTimes.length / 5).toFixed(1); };

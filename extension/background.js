@@ -70,7 +70,11 @@ async function release(s) {
   try { await chrome.debugger.detach({ tabId: t }); } catch {}
 }
 const fastGap = (s) => Math.max(0, FAST_INTERVAL - (Date.now() - s.lastStepAt));
-chrome.debugger.onDetach.addListener((src) => { if (src.tabId === session?.attachedTabId) forgetTab(session); });
+chrome.debugger.onDetach.addListener((src, reason) => {
+  if (src.tabId !== session?.attachedTabId) return;
+  if (reason === 'canceled_by_user') return endSession('host-canceled'); // host 端的人在提示列按了「取消」：尊重，結束這次連線
+  forgetTab(session); // 分頁被關等其他原因：下一輪重選
+});
 
 async function endSession(reason) {
   const s = session;
@@ -80,7 +84,6 @@ async function endSession(reason) {
   slog('結束連線：', reason);
   await toOff({ type: 'end', reason }, s);
   if (s.attachedTabId != null) chrome.debugger.detach({ tabId: s.attachedTabId }).catch(() => {});
-  setTimeout(() => { if (!session) chrome.offscreen.closeDocument().catch(() => {}); }, 1500);
 }
 
 const shot = async (tabId) => (await Promise.race([
@@ -227,9 +230,8 @@ async function onRequest(req) {
   if (!(await findClaudeGroups()).length) { await reply(req, { error: 'ai-idle' }); return slog('沒有 Claude 分頁群組，拒絕連線'); }
   await endSession('replaced');
   session = { req, attachedTabId: null, lastData: null, pending: null, pendingAt: 0, seq: 0, pendingSeq: 0, lastStepAt: 0, lastInputAt: 0, view: null, pinnedTabId: null, cur: null, tabs: [], lastTabs: null };
-  await ensureOffscreen();
   for (let i = 0; i < 5; i++) {
-    try { await chrome.runtime.sendMessage({ target: 'offscreen', type: 'offer', sdp: req.sdp, id: req.id }); return; }
+    try { await ensureOffscreen(); await chrome.runtime.sendMessage({ target: 'offscreen', type: 'offer', sdp: req.sdp, id: req.id }); return; } // 每輪都確認文件還在（它可能剛好自己關掉）
     catch { await new Promise((r) => setTimeout(r, 300)); }
   }
   slog('offscreen 沒有回應');
@@ -246,9 +248,11 @@ chrome.tabGroups.onRemoved.addListener(async () => { if (session && !(await find
 chrome.runtime.onMessage.addListener((m) => {
   if (m.target !== 'sw') return;
   if (m.type === 'log') return slog('[offscreen]', m.line);
+  if (m.type === 'idle') return chrome.offscreen.closeDocument().catch(() => {}); // offscreen 自己回報兩條連線都沒了
   if (m.type.startsWith('v-') || !session || m.id !== session.req.id) return; // 其餘一律要帶目前這條連線的編號，viewer 端的 v-* 由 viewer-bg.js 處理
   if (m.type === 'input') (m.ev?.type === 'nav' || m.ev?.type === 'tab' ? control : input)(m.ev);
   if (m.type === 'answer') reply(session.req, { sdp: m.sdp }).then(() => slog('answer 已寫入 sync'));
+  if (m.type === 'answer-failed') { reply(session.req, { error: 'failed' }); endSession('answer-failed'); } // 不讓 viewer 乾等 20 秒
   if (m.type === 'open') { slog('DataChannel 開啟，開始傳畫面'); schedule(0); }
   if (m.type === 'ready' && m.seq === session.pendingSeq && session.pending != null) { // 這張確認送達，才算「已送出的最後一張」
     session.lastData = session.pending; session.pending = null;
@@ -256,5 +260,12 @@ chrome.runtime.onMessage.addListener((m) => {
   }
   if (m.type === 'closed') endSession('viewer-left');
 });
+
+// 背景程式（重新）啟動時：它不記得任何連線，所以殘留的 debugger 與 offscreen 的 host 連線都要收掉。
+// 排在請求佇列的第一環，之後才處理喚醒它的那個請求。detach 對別的擴充功能（Claude）或開發者工具接上的分頁只會失敗。
+reqQ = reqQ.then(async () => {
+  for (const t of await chrome.debugger.getTargets()) if (t.attached && t.tabId) await chrome.debugger.detach({ tabId: t.tabId }).catch(() => {});
+  toOff({ type: 'reset' }, null);
+}).catch(() => {});
 
 importScripts('viewer-bg.js');

@@ -10,6 +10,9 @@ function die(c) { // 連線結束的唯一出口，只通知一次
   c.dead = true;
   send(c, { type: 'closed' });
 }
+function idleCheck() { // 兩條連線（host 與 viewer）都沒了，請背景程式把這個 offscreen 文件關掉
+  setTimeout(() => { if (!cur && !vc) raw({ type: 'idle' }); }, 1500);
+}
 function closeConn(c) {
   clearTimeout(c.dropTimer);
   c.pc.onconnectionstatechange = null;
@@ -68,12 +71,16 @@ function sendFrame(c, m) {
 
 chrome.runtime.onMessage.addListener((m) => {
   if (m.target !== 'offscreen') return;
-  if (m.type === 'offer') return answer(m).catch((e) => log('answer 失敗:', e.message));
+  if (m.type === 'offer') return answer(m).catch((e) => { log('answer 失敗:', e.message); if (cur?.id === m.id) send(cur, { type: 'answer-failed' }); });
+  if (m.type === 'reset') { // 背景程式重新啟動：它已不記得這條連線，直接收掉（不送 end，讓 viewer 走自動重連）
+    if (cur) { closeConn(cur); cur = null; idleCheck(); }
+    return;
+  }
   const c = cur;
   if (!c || m.id !== c.id) return; // 不是目前這條連線的訊息
   if (m.type === 'end') {
     if (c.ch?.readyState === 'open') c.ch.send(JSON.stringify({ type: 'end', reason: m.reason }));
-    return void setTimeout(() => { if (cur === c) { closeConn(c); cur = null; } }, 500);
+    return void setTimeout(() => { if (cur === c) { closeConn(c); cur = null; idleCheck(); } }, 500);
   }
   if (c.ch?.readyState !== 'open') return;
   if (m.type === 'frame') sendFrame(c, m);

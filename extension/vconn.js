@@ -1,7 +1,10 @@
 // viewer 端 WebRTC（offscreen 頁面）：建立連線、組回畫面，以 blob URL 交給檢視頁面顯示。
 // 畫面往這裡來；檢視頁面的滑鼠鍵盤事件經這裡送給 host（host 在 input() 逐項檢查後才執行）
 // 每條連線一個物件 c，所有回呼只認「自己是不是目前這條」，被取代的連線不會再發任何訊息
-let vc = null; // { id, pc, dc, frame, connected, dead }
+const RX_TIMEOUT = 10000; // host 最慢約 5 秒必有一筆資料（畫面或 same）；10 秒沒收到視為中斷
+let vc = null; // { id, pc, dc, frame, connected, dead, lastRx, watch }
+const pagePorts = new Set(); // 檢視頁面各開一條 port 當生命線，全部斷了就停止連線
+let pageSeen = false;
 let vlast = {}, vurls = []; // vlast：各類訊息最近一筆，檢視頁面晚開時補送
 const vsend = (m, c = vc) => chrome.runtime.sendMessage({ target: 'sw', id: c?.id, ...m }).catch(() => {}); // 上行訊息一律帶連線編號
 const vlog = (...a) => vsend({ type: 'log', line: '[viewer] ' + a.join(' ') });
@@ -15,12 +18,15 @@ const emit = (m) => {
 function vstop() {
   const c = vc; vc = null; vlast = {};
   if (!c) return;
+  clearInterval(c.watch);
   c.pc.onconnectionstatechange = null; c.dc.onclose = null;
   c.pc.close();
+  idleCheck();
 }
 function vdie(c) { // 連線結束的唯一出口，只通知一次
   if (c !== vc || c.dead) return;
   c.dead = true;
+  clearInterval(c.watch);
   vsend({ type: 'v-closed', connected: c.connected }, c);
 }
 
@@ -29,13 +35,18 @@ async function vstart(id) {
   const p = new RTCPeerConnection({ iceServers: [] });
   const dc = p.createDataChannel('v');
   dc.binaryType = 'arraybuffer';
-  const c = vc = { id, pc: p, dc, frame: null, connected: false, dead: false };
+  const c = vc = { id, pc: p, dc, frame: null, connected: false, dead: false, lastRx: Date.now(), watch: null };
+  pageSeen = pagePorts.size > 0;
   dc.onmessage = (e) => onData(c, e);
   dc.onclose = () => vdie(c);
   p.onconnectionstatechange = () => {
     if (c !== vc) return;
     vlog('connection', p.connectionState);
-    if (p.connectionState === 'connected') { c.connected = true; vsend({ type: 'v-connected' }, c); }
+    if (p.connectionState === 'connected') {
+      c.connected = true; c.lastRx = Date.now();
+      c.watch = setInterval(() => { if (Date.now() - c.lastRx > RX_TIMEOUT) { vlog('超過', RX_TIMEOUT / 1000, '秒沒收到資料，視為中斷'); vdie(c); } }, 2000);
+      vsend({ type: 'v-connected' }, c);
+    }
     if (['failed', 'closed'].includes(p.connectionState)) vdie(c);
   };
   await p.setLocalDescription(await p.createOffer());
@@ -48,6 +59,7 @@ async function vstart(id) {
 
 function onData(c, e) {
   if (c !== vc) return;
+  c.lastRx = Date.now();
   if (typeof e.data !== 'string') {
     if (!c.frame) return;
     c.frame.parts.push(e.data);
@@ -59,7 +71,7 @@ function onData(c, e) {
   if (m.type === 'h') c.frame = { m, parts: [] };
   if (m.type === 'same') emit({ type: 'same', state: m.state });
   if (m.type === 'error') emit({ type: 'error', message: m.message });
-  if (m.type === 'end') emit({ type: 'end' });
+  if (m.type === 'end') { clearInterval(c.watch); emit({ type: 'end', reason: m.reason }); } // host 有意結束，不再算沉默
   if (m.type === 'tabs' && Array.isArray(m.tabs)) emit({ type: 'tabs', cur: m.cur, pinned: m.pinned, tabs: m.tabs });
 }
 
@@ -69,6 +81,15 @@ function showFrame(m, parts) {
   if (vurls.length > 4) URL.revokeObjectURL(vurls.shift());
   emit({ type: 'frame', src, state: m.state, ts: m.ts, tabId: m.tabId });
 }
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'viewer-page') return;
+  pagePorts.add(port); pageSeen = true;
+  port.onDisconnect.addListener(() => {
+    pagePorts.delete(port);
+    if (pageSeen && !pagePorts.size && vc) vsend({ type: 'v-pagegone' }); // 檢視頁面關了、或被導去別的網址
+  });
+});
 
 chrome.runtime.onMessage.addListener((m) => {
   if (m.target !== 'voff') return;

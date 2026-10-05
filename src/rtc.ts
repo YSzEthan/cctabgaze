@@ -66,8 +66,11 @@ export function keepAllowed(sdp: string, nets: Net[]): { sdp: string; kept: numb
   return { sdp: out.join('\r\n'), kept };
 }
 
-// 連上後讀實際選用的 pair。過濾的只是 SDP 文字，這是 socket 層的檢查；位址讀不到（例如被遮蔽的 prflx）一律算不通過
-export async function checkPair(pc: RTCPeerConnection, nets: Net[]): Promise<PairCheck> {
+// 連上後讀實際選用的 pair。過濾的只是 SDP 文字，這是 socket 層的檢查；位址讀不到（例如被遮蔽的 prflx）一律算不通過。
+// remoteOptional（手機 viewer）：對方位址讀不到時，只要選中的本機位址在允許網段內就通過——
+// 本機位址是 Tailscale 的位址，封包就一定是從 Tailscale 通道進來的；讀得到的位址仍然必須在網段內
+export async function checkPair(pc: RTCPeerConnection, nets: Net[], remoteOptional = false): Promise<PairCheck> {
+  let seenLocal: string | undefined;
   for (let i = 0; i < 5; i++) {
     const stats = await pc.getStats();
     let pair: any = null; // RTCStatsReport 的項目在 lib.dom 裡本來就是 any
@@ -75,9 +78,10 @@ export async function checkPair(pc: RTCPeerConnection, nets: Net[]): Promise<Pai
     const l = pair && stats.get(pair.localCandidateId), x = pair && stats.get(pair.remoteCandidateId);
     const local: string | undefined = l && (l.address ?? l.ip), remote: string | undefined = x && (x.address ?? x.ip);
     if (local && remote) return { ok: inNets(local, nets) && inNets(remote, nets), local, remote };
+    seenLocal = local ?? seenLocal;
     await new Promise((r) => setTimeout(r, 200)); // 剛連上時 stats 可能還沒填好
   }
-  return { ok: false };
+  return remoteOptional && seenLocal ? { ok: inNets(seenLocal, nets), local: seenLocal } : { ok: false, local: seenLocal };
 }
 
 export const gathered = (p: RTCPeerConnection) => new Promise<void>((res) => {

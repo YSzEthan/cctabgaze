@@ -3,12 +3,14 @@
 // 分頁控制（網址、上一頁、切換、開啟、關閉）只在 control() 裡，且只作用在 Claude 分頁群組內的分頁
 import './viewer-bg.ts'; // viewer 端的大腦，和 host 共用同一個背景程式
 import { REQ, RES, slog, ensureOffscreen, errText } from './shared.ts';
-import type { AiState, EndReason, Format, Mode, Msg, OffBody, OfferMsg, Req, Res, Tune, Untrusted } from './protocol.ts';
+import { startSignal } from './signal.ts';
+import type { AiState, EndReason, Format, Mode, Msg, OffBody, OfferMsg, Reply, Req, Res, Transport, Tune, Untrusted } from './protocol.ts';
 
 type Tab = chrome.tabs.Tab;
 type Group = chrome.tabGroups.TabGroup;
 interface Session {
   req: Req;
+  reply: Reply; // 回覆這個請求的管道（storage.sync 或信令伺服器）
   attachedTabId: number | null;
   lastData: string | null; // 已確認送達的最後一張
   pending: string | null; // 送出但還沒確認的畫面
@@ -283,21 +285,29 @@ async function doControl(ev: Untrusted): Promise<void> {
 }
 
 // ---- 被動回應 viewer 的請求 ----
-const reply = (req: Req, body: Pick<Res, 'sdp' | 'error'>) => chrome.storage.sync.set({ [RES]: { to: req.from, id: req.id, t: Date.now(), ...body } satisfies Res });
+const syncTransport = (req: Req): Transport => ({
+  lax: false,
+  stale: async () => (await chrome.storage.sync.get<{ [REQ]: Req }>(REQ))[REQ]?.id !== req.id, // 排隊期間 viewer 可能已重按或放棄
+  reply: (body) => {
+    const item = { [RES]: { to: req.from, id: req.id, t: Date.now(), ...body } satisfies Res };
+    if (body.sdp) slog('answer 字串化長度', JSON.stringify(item).length); // 同步的單筆上限約 8 KB（按字串化後算）
+    return chrome.storage.sync.set(item);
+  },
+});
 
-async function onRequest(req: Req) {
+async function onRequest(req: Req, { reply, lax, stale }: Transport) {
   const { role = 'host', deviceId } = await chrome.storage.local.get<{ role: string; deviceId: string }>(['role', 'deviceId']);
   if (role !== 'host' || req.from === deviceId) return;
-  if ((await chrome.storage.sync.get<{ [REQ]: Req }>(REQ))[REQ]?.id !== req.id) return slog('略過已被取代或撤回的請求', req.id.slice(0, 8)); // 排隊期間 viewer 可能已重按或放棄
+  if (await stale?.()) return slog('略過已被取代或撤回的請求', req.id.slice(0, 8));
   const age = Date.now() - req.t;
   if (age > REQ_TTL) return slog('忽略過期的請求，已過', age, 'ms');
-  slog('收到連線請求', req.id.slice(0, 8), '，延遲約', age, 'ms');
-  if (!(await findClaudeGroups()).length) { await reply(req, { error: 'ai-idle' }); return slog('沒有 Claude 分頁群組，拒絕連線'); }
+  slog('收到連線請求', req.id.slice(0, 8), lax ? '（信令伺服器）' : '（同步）', '，延遲約', age, 'ms');
+  if (!(await findClaudeGroups()).length) { await reply({ error: 'ai-idle' }); return slog('沒有 Claude 分頁群組，拒絕連線'); }
   await endSession('replaced');
   const { nets } = await chrome.storage.local.get<{ nets: unknown }>('nets'); // 允許的網段（各機器本機設定，不經同步）
-  session = { req, attachedTabId: null, lastData: null, pending: null, pendingAt: 0, seq: 0, pendingSeq: 0, lastStepAt: 0, lastInputAt: 0, view: null, tune: DEFAULT_TUNE, videoOk: false, perf: newPerf(), pinnedTabId: null, cur: null, tabs: [], lastTabs: null, busy: false };
+  session = { req, reply, attachedTabId: null, lastData: null, pending: null, pendingAt: 0, seq: 0, pendingSeq: 0, lastStepAt: 0, lastInputAt: 0, view: null, tune: DEFAULT_TUNE, videoOk: false, perf: newPerf(), pinnedTabId: null, cur: null, tabs: [], lastTabs: null, busy: false };
   for (let i = 0; i < 5; i++) {
-    try { await ensureOffscreen(); await chrome.runtime.sendMessage({ target: 'offscreen', type: 'offer', sdp: req.sdp, id: req.id, nets } satisfies OfferMsg); return; } // 每輪都確認文件還在（它可能剛好自己關掉）
+    try { await ensureOffscreen(); await chrome.runtime.sendMessage({ target: 'offscreen', type: 'offer', sdp: req.sdp, id: req.id, nets, lax } satisfies OfferMsg); return; } // 每輪都確認文件還在（它可能剛好自己關掉）
     catch { await new Promise((r) => setTimeout(r, 300)); }
   }
   slog('offscreen 沒有回應');
@@ -306,8 +316,9 @@ async function onRequest(req: Req) {
 let reqQ: Promise<void> = Promise.resolve(); // 串行：兩個請求接連到達時不能同時建立 offscreen
 chrome.storage.onChanged.addListener((ch, area) => {
   const req = area === 'sync' && ch[REQ]?.newValue as Req | undefined;
-  if (req) reqQ = reqQ.then(() => onRequest(req)).catch((e) => { slog('處理請求失敗：', errText(e)); });
+  if (req) queueRequest(req, syncTransport(req));
 });
+const queueRequest = (req: Req, t: Transport) => { reqQ = reqQ.then(() => onRequest(req, t)).catch((e) => { slog('處理請求失敗：', errText(e)); }); };
 
 chrome.tabGroups.onRemoved.addListener(async () => { if (session && !(await findClaudeGroups()).length) endSession('ai-ended'); });
 
@@ -320,12 +331,11 @@ chrome.runtime.onMessage.addListener((m: Msg) => {
     const ev = rec(m.ev);
     if (ev?.type === 'tune') tune(ev); else if (ev?.type === 'nav' || ev?.type === 'tab') control(ev); else input(ev);
   }
-  if (m.type === 'answer') { // 同步的單筆上限約 8 KB（按字串化後算）；超過要明講，不能讓 viewer 乾等 20 秒
-    const req = session.req;
-    slog('answer 字串化長度', JSON.stringify({ [RES]: { to: req.from, id: req.id, t: 0, sdp: m.sdp } }).length);
-    reply(req, { sdp: m.sdp }).then(() => slog('answer 已寫入 sync'), (e) => { slog('answer 寫入 sync 失敗：', errText(e)); reply(req, { error: 'too-big' }).catch(() => {}); });
+  if (m.type === 'answer') { // 送不出去要明講（sync 單筆上限約 8 KB），不能讓 viewer 乾等 20 秒
+    const reply = session.reply;
+    reply({ sdp: m.sdp }).then(() => slog('answer 已送出'), (e) => { slog('answer 送出失敗：', errText(e)); reply({ error: 'too-big' }).catch(() => {}); });
   }
-  if (m.type === 'answer-failed') { reply(session.req, { error: m.reason || 'failed' }); endSession('answer-failed'); } // 不讓 viewer 乾等 20 秒
+  if (m.type === 'answer-failed') { session.reply({ error: m.reason || 'failed' }).catch(() => {}); endSession('answer-failed'); } // 不讓 viewer 乾等 20 秒
   if (m.type === 'open') { session.videoOk = m.video; slog('DataChannel 開啟，開始傳畫面，視訊', m.video); schedule(0); }
   if (m.type === 'video-failed') { session.videoOk = false; slog('視訊編碼失敗，改用圖片'); }
   if (m.type === 'ready' && m.seq === session.pendingSeq && session.pending != null) { // 這張確認送達，才算「已送出的最後一張」
@@ -343,3 +353,6 @@ reqQ = reqQ.then(async () => {
   for (const t of await chrome.debugger.getTargets()) if (t.attached && t.tabId) await chrome.debugger.detach({ tabId: t.tabId }).catch(() => {});
   toOff({ type: 'reset' }, null);
 }).catch(() => {});
+
+// 信令伺服器：收到 offer 就排進同一條請求佇列，和 sync 的請求走同一條路徑。t 用收到的時間，不用伺服器的（避免兩邊時鐘差造成誤判過期）
+startSignal((o, reply) => queueRequest({ id: o.id, from: 'signal', t: Date.now(), sdp: o.sdp }, { reply, lax: true }));

@@ -1,5 +1,5 @@
 // 位址與網段解析的測試：node test/rtc.test.ts（Node 直接執行 TypeScript，不需要先編譯）
-import { inNets, keepAllowed, netsOrDefault, parseCidr, parseIp, parseNets } from '../src/rtc.ts';
+import { checkPair, inNets, keepAllowed, netsOrDefault, parseCidr, parseIp, parseNets } from '../src/rtc.ts';
 
 let fail = 0;
 const eq = (name: string, got: unknown, want: unknown) => { if (got !== want) { fail++; console.log('FAIL', name, '→', got, '應為', want); } };
@@ -55,5 +55,19 @@ const lf = sdp.replace(/\r\n/g, '\n');
 eq('LF 換行一樣過濾', keepAllowed(lf, D).kept, 2);
 eq('LF 換行丟區網', keepAllowed(lf, D).sdp.includes('192.168.1.5 5001'), false);
 
-console.log(fail ? `${fail} 項失敗` : '全部通過');
+// checkPair：用假的 RTCPeerConnection 餵 getStats
+const fakePc = (local?: string, remote?: string) => ({ getStats: async () => {
+  const m = new Map<string, any>([['t', { type: 'transport', selectedCandidatePairId: 'p' }], ['p', { localCandidateId: 'l', remoteCandidateId: 'r' }], ['l', local ? { address: local } : {}], ['r', remote ? { address: remote } : {}]]);
+  return m; // Map 的 forEach 和 get 剛好和 RTCStatsReport 用法相同（forEach 的參數是 value）
+} }) as unknown as RTCPeerConnection;
+eq('checkPair 兩端都在網段', (await checkPair(fakePc('100.100.1.1', '100.101.2.2'), D)).ok, true);
+eq('checkPair 對方在網段外', (await checkPair(fakePc('100.100.1.1', '192.168.0.15'), D)).ok, false);
+eq('checkPair 本機在網段外', (await checkPair(fakePc('192.168.0.15', '100.101.2.2'), D)).ok, false);
+eq('checkPair 對方位址讀不到：嚴格模式不通過', (await checkPair(fakePc('100.100.1.1'), D)).ok, false);
+eq('checkPair 對方位址讀不到：lax 只看本機，通過', (await checkPair(fakePc('100.100.1.1'), D, true)).ok, true);
+eq('checkPair 對方位址讀不到：lax 本機在網段外，不通過', (await checkPair(fakePc('192.168.0.15'), D, true)).ok, false);
+eq('checkPair 對方位址讀得到但在網段外：lax 也不通過', (await checkPair(fakePc('100.100.1.1', '192.168.0.15'), D, true)).ok, false);
+eq('checkPair 兩端都讀不到：lax 不通過', (await checkPair(fakePc(), D, true)).ok, false);
+
+console.log(fail ?  `${fail} 項失敗` : '全部通過');
 process.exit(fail ? 1 : 0);

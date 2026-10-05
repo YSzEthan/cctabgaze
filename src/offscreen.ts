@@ -11,6 +11,7 @@ interface Conn {
   dropTimer: ReturnType<typeof setTimeout> | undefined;
   dead: boolean;
   nets: Net[];
+  lax: boolean; // 信令伺服器來的 offer（手機 viewer）：offer 不必有允許網段的位址，對方位址讀不到也可以
   verified: boolean;
   opened: boolean;
   pairWatched: boolean;
@@ -54,7 +55,7 @@ function closeConn(c: Conn) {
 
 // 連上後檢查實際選用的兩端位址；通過才開始傳畫面與收輸入。選用的 pair 之後若換了也重查，不通過就收線
 async function verifyConn(c: Conn) {
-  const r = await checkPair(c.pc, c.nets);
+  const r = await checkPair(c.pc, c.nets, c.lax);
   if (c !== cur || c.dead) return;
   log('選用 pair:', r.local, '→', r.remote, r.ok ? '' : '（不在允許網段內，關閉連線）');
   if (!r.ok) return die(c);
@@ -109,7 +110,7 @@ function capBitrate(c: Conn) { // 位元率上限；失敗不影響連線
 async function answer(m: OfferMsg) {
   if (cur) closeConn(cur);
   const p = new RTCPeerConnection({ iceServers: [], bundlePolicy: 'max-bundle' });
-  const c: Conn = cur = { id: m.id, pc: p, ch: null, dropTimer: undefined, dead: false, nets: netsOrDefault(m.nets), verified: false, opened: false, pairWatched: false, video: null, videoTr: null, statsTimer: undefined, prev: null };
+  const c: Conn = cur = { id: m.id, pc: p, ch: null, dropTimer: undefined, dead: false, nets: netsOrDefault(m.nets), lax: m.lax, verified: false, opened: false, pairWatched: false, video: null, videoTr: null, statsTimer: undefined, prev: null };
   p.onconnectionstatechange = async () => {
     if (c !== cur) return;
     log('connection', p.connectionState);
@@ -135,7 +136,7 @@ async function answer(m: OfferMsg) {
   };
   const offer = keepAllowed(m.sdp, c.nets);
   log('offer 保留的允許網段 candidate 數:', offer.kept);
-  if (!offer.kept) return send(c, { type: 'answer-failed', reason: 'no-net' });
+  if (!offer.kept && !m.lax) return send(c, { type: 'answer-failed', reason: 'no-net' });
   await p.setRemoteDescription({ type: 'offer', sdp: offer.sdp });
   const tr = p.getTransceivers().find((t) => t.receiver.track.kind === 'video');
   if (tr) { // viewer 要了視訊：host 這邊用 generator 當來源；失敗就只走圖片

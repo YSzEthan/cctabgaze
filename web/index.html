@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>cctabgaze</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#1a73e8">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<style>
+  :root { --bg:#fafafa; --fg:#222; --mute:#666; --line:#8884; --on:#1a73e8; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#111; --fg:#eee; --mute:#999; } }
+  html, body { height:100%; margin:0; background:var(--bg); color:var(--fg); font:15px system-ui, sans-serif; }
+  body { display:flex; flex-direction:column; padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); box-sizing:border-box; }
+  header { display:flex; gap:8px; align-items:center; padding:8px 12px; border-bottom:1px solid var(--line); }
+  #status { flex:1; min-width:0; color:var(--mute); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  button { font:inherit; padding:6px 14px; }
+  #stage { flex:1; min-height:0; display:flex; align-items:center; justify-content:center; padding:0 16px; text-align:center; }
+  #img, #vid { max-width:100%; max-height:100%; object-fit:contain; user-select:none; -webkit-user-drag:none; touch-action:none; }
+  #msg { color:var(--mute); }
+  #setup { display:flex; flex-direction:column; gap:8px; width:100%; max-width:22em; }
+  #setup input { font:inherit; padding:8px; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<header><strong>cctabgaze</strong><span id="status"></span><button id="go">連線</button></header>
+<main id="stage">
+  <img id="img" alt="" hidden>
+  <video id="vid" muted autoplay playsinline hidden></video>
+  <div id="msg"></div>
+  <form id="setup" hidden>
+    <label for="token">token（伺服器 ~/.config/cctabgaze/token 的內容）</label>
+    <input id="token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <button>儲存並連線</button>
+  </form>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>

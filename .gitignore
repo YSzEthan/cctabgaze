@@ -2,3 +2,4 @@ node_modules/
 # tsc 的輸出：原始碼在 src/
 extension/*.js
 cctabgaze*.zip
+web/app.js

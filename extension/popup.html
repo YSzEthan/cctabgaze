@@ -22,7 +22,10 @@
   #nets { width:100%; box-sizing:border-box; margin-top:6px; font:12px ui-monospace, monospace; }
   #netsrow { display:flex; gap:8px; align-items:center; margin-top:6px; }
   #netsrow button { flex:none; padding:4px 12px; }
-  #netsmsg { color:var(--mute); }
+  #netsmsg, #sigmsg { color:var(--mute); }
+  #sigurl, #sigtoken { width:100%; box-sizing:border-box; margin-top:6px; font:12px ui-monospace, monospace; }
+  #sigrow { display:flex; gap:8px; align-items:center; margin-top:6px; }
+  #sigrow button { flex:none; padding:4px 12px; }
   button.on { background:var(--on); color:#fff; border:1px solid var(--on); border-radius:4px; }
 </style>
 </head>
@@ -46,6 +49,13 @@
   <p style="margin:6px 0 0;color:var(--mute)">連線只接受這些網段內的位址，一行一個（例如 100.64.0.0/10）。留空就還原預設。<b>兩台都要各設一次</b>，下次連線生效。</p>
   <textarea id="nets" rows="4" spellcheck="false" autocomplete="off"></textarea>
   <div id="netsrow"><button id="netssave">儲存</button><span id="netsmsg"></span></div>
+</details>
+<details>
+  <summary>信令伺服器（手機 PWA）</summary>
+  <p style="margin:6px 0 0;color:var(--mute)">給 host 用：連到自架的伺服器，手機才連得進來。位址例如 wss://主機名:8443/ws，token 要和伺服器的 CG_TOKEN 相同。兩者都留空就不連線。存在這台，不同步。</p>
+  <input id="sigurl" type="text" placeholder="wss://…/ws" spellcheck="false" autocomplete="off">
+  <input id="sigtoken" type="password" placeholder="token" autocomplete="off">
+  <div id="sigrow"><button id="sigsave">儲存</button><span id="sigmsg"></span></div>
 </details>
 <script type="module" src="popup.js"></script>
 </body>

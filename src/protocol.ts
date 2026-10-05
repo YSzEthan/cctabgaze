@@ -10,6 +10,10 @@ export interface TabInfo { id: number | undefined; title: string; url: string }
 // ---- storage.sync 上的握手 ----
 export interface Req { id: string; from: string; t: number; sdp: string }
 export interface Res { to: string; id: string; t: number; sdp?: string; error?: string }
+// 一個請求從哪裡來、怎麼回覆。sync：viewer 是插件，offer 一定帶允許網段的位址。
+// 信令伺服器（lax）：viewer 可能是手機瀏覽器，offer 裡沒有 Tailscale 位址（只有 .local 或區網位址），要靠 host 的位址讓它連進來
+export type Reply = (body: Pick<Res, 'sdp' | 'error'>) => Promise<void>;
+export interface Transport { reply: Reply; lax: boolean; stale?: () => Promise<boolean> }
 
 // ---- DataChannel：viewer → host。host 端一律當成不可信的資料，在 input()、tune()、doControl() 逐項檢查 ----
 export type Button = 'left' | 'middle' | 'right' | 'none';
@@ -61,7 +65,7 @@ export type OffBody =
   | { type: 'frame'; b64: string; state: AiState; tabId: number; ts: number; seq: number; fmt: Format; video: boolean }
   | { type: 'ctl'; msg: CtlMsg }
   | { type: 'reset' };
-export type OfferMsg = { target: 'offscreen'; type: 'offer'; id: string; sdp: string; nets: unknown };
+export type OfferMsg = { target: 'offscreen'; type: 'offer'; id: string; sdp: string; nets: unknown; lax: boolean };
 export type OffMsg = OfferMsg | ({ target: 'offscreen'; id?: string } & OffBody);
 
 // ---- → viewer 端 offscreen ----

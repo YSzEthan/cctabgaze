@@ -48,6 +48,32 @@ WebRTC 直連（Tailscale）◄══════ 畫面 ═══════�
 - **品質**（30／50／75／90）、**格式**（JPEG／WebP／PNG）：僅圖片模式。
 - **速率**：上限 5／10／15／25 fps 或不限（預設不限）。上限是指兩張畫面之間的最短間隔。
 
+## 信令伺服器（手機 PWA 用，開發中）
+
+手機沒有 Chrome 插件，無法用 Google 同步交換連線資訊，所以另有一個自架的信令伺服器（Bun）。它只轉送 offer 與 answer，畫面與輸入仍走 WebRTC 直連（經 Tailscale），不經伺服器。伺服器同時提供手機用的網頁（PWA，`web/`）。目前手機網頁只能**看畫面**；點擊、捲動、鍵盤、分頁列與設定還沒做。
+
+```
+手機 ── POST /offer ──► 伺服器 ◄══ WebSocket ══ host 插件
+手機 ◄── answer ───────  伺服器 ◄── answer ───── host 插件
+手機 ◄══════════ WebRTC 直連（Tailscale）══════════► host
+```
+
+**架設（伺服器那台，macOS）：**
+
+1. 安裝 [Bun](https://bun.sh)，執行 `scripts/install-server.sh`。它會產生 token（`~/.config/cctabgaze/token`，權限 600）、把伺服器複製到 `~/.config/cctabgaze/server`，並裝成 launchd 服務（預設 port 8790，開機自動啟動、掛了自動重啟）。改了 `server/` 要重跑一次。
+2. 用 Tailscale 提供 HTTPS：`tailscale serve --bg --https=8443 8790`（只有你的 tailnet 連得到；**不要用 `tailscale funnel`**，那會開到公網）。
+3. host 的插件懸浮視窗 →「信令伺服器」，填 `wss://<主機名>.<tailnet>.ts.net:8443/ws` 與 token。留空就不連線，原本的 Google 同步路徑照常運作。
+4. 手機（要先開 Tailscale）開 `https://<主機名>.<tailnet>.ts.net:8443/#t=<token>`：token 只在第一次要帶，之後存在手機的 localStorage（網址片段不會送到伺服器，讀完就從網址移除）。之後點「連線」。可以加到主畫面。token 錯誤會回到輸入欄。
+5. 手動測試：`CG_TOKEN=<至少 24 字元> bun server/index.ts`；`npm run e2e:signal` 會起伺服器並用一般網頁模擬手機連一次。
+
+**手機連線的特性：** 手機瀏覽器（實測 iPhone Safari）的 offer 裡沒有 Tailscale 位址，只有 `.local` 或區網位址，所以 host 對信令伺服器來的請求不要求 offer 帶允許網段的位址，連上後只檢查 host 這邊選中的本機位址在允許網段內（連線一定是從 Tailscale 通道進來的），對方位址讀得到時仍必須在網段內。host 回的 answer 仍只含允許網段內的位址。手機端（Safari 把兩端位址都遮蔽）無法檢查對方位址。
+
+**信任模型（和同步路徑不同）：** 同步路徑靠「同一個 Google 帳號加同一個 Tailscale 網路」；信令伺服器靠「token 加 Tailscale 網路」。
+
+- 伺服器等同完全信任：被入侵的伺服器能替換兩端 SDP 裡的 DTLS 指紋做中間人，看到畫面與所有輸入（含密碼）。只能跑在自己的機器上。
+- token 是唯一的認證（至少 24 字元，伺服器以常數時間比對）。知道 token 且在你的 tailnet 內的人，可以操作 host 登入中的網站（host 沒有操作限制）。外洩就刪掉 `~/.config/cctabgaze/token`、重跑安裝腳本，並更新 host 插件的設定。
+- 兩條路徑同時開著，攻擊面是兩者的聯集；不需要同步路徑的話，可以用 Tailscale ACL 限制誰能連伺服器。
+
 ## 允許的網段
 
 連線只接受允許網段內的位址，預設是 `100.64.0.0/10` 與 `fd7a:115c:a1e0::/48`（Tailscale；NetBird 的 `100.96.x.x` 也落在第一段）。換別的 VPN 或要放寬，在懸浮視窗的「允許的網段」一行一個填 CIDR，留空還原預設。

@@ -20,7 +20,7 @@ export async function launch(extPath: string, args: string[] = []) {
   const browser = await puppeteer.launch({
     executablePath: CHROME, headless: false, pipe: true, enableExtensions: [extPath], defaultViewport: null,
     userDataDir: mkdtempSync(join(tmpdir(), 'cctabgaze-')),
-    args: ['--no-first-run', '--no-default-browser-check', '--window-size=1280,900', ...args],
+    args: ['--no-first-run', '--no-default-browser-check', '--window-size=1280,900', ...(process.env.CI ? ['--no-sandbox'] : []), ...args], // CI（Ubuntu 24.04）的使用者命名空間受限，Chrome 的沙箱起不來
   });
   const target = await browser.waitForTarget((t) => t.type() === 'service_worker' && t.url().startsWith('chrome-extension://'), { timeout: 15000 });
   const sw = await target.worker();

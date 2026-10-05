@@ -1,4 +1,5 @@
 // 端對端測試（信令伺服器）：npm run e2e:signal。需要 bun。
+// 環境變數 CG_E2E_ANY_NET=1：允許所有網段（機器沒有 Tailscale 位址，例如 CI）；沒設的話用預設網段，會驗證 host 選中的是 Tailscale 位址。
 // 起一個真的信令伺服器，host 插件連上去；用一般網頁（不是插件）當「手機」：offer 裡只有 .local 位址，
 // 透過 POST /offer 取得 answer，確認 DataChannel 開啟、收得到 host 傳來的畫面訊息，且 host 的位址檢查走 lax 模式通過。
 import { spawn, spawnSync } from 'node:child_process';
@@ -6,6 +7,7 @@ import { join } from 'node:path';
 import { launch, serve, sleep } from './chrome.ts';
 
 const root = join(import.meta.dirname, '..');
+const ANY_NET = !!process.env.CG_E2E_ANY_NET;
 const PORT = 18790, TOKEN = 'e2e-token-' + 'x'.repeat(20);
 let fail = 0;
 const ok = (name: string, pass: boolean, detail: unknown = '') => { if (!pass) fail++; console.log(pass ? 'ok  ' : 'FAIL', name, detail); };
@@ -33,12 +35,12 @@ try {
 
   const page = await browser.newPage();
   await page.goto(site.url);
-  await sw.evaluate(async (url, port, token) => { // AI 的分頁群組；網段用預設（Tailscale），這台有 100.x 位址才會過
+  await sw.evaluate(async (url, port, token, anyNet) => { // AI 的分頁群組；網段預設是 Tailscale（這台要有 100.x 位址才會過），沒有就用 CG_E2E_ANY_NET
     const [t] = await chrome.tabs.query({ url: url + '*' });
     const gid = await chrome.tabs.group({ tabIds: [t!.id!] });
     await chrome.tabGroups.update(gid, { title: '⌛ Claude' });
-    await chrome.storage.local.set({ signal: { url: `ws://127.0.0.1:${port}/ws`, token } });
-  }, site.url, PORT, TOKEN);
+    await chrome.storage.local.set({ signal: { url: `ws://127.0.0.1:${port}/ws`, token }, ...(anyNet && { nets: ['0.0.0.0/0', '::/0'] }) });
+  }, site.url, PORT, TOKEN, ANY_NET);
   await until('host 連上伺服器', async () => srvOut.includes('host 已連上'));
   ok('host 連上信令伺服器', true);
 
@@ -67,7 +69,7 @@ try {
   ok('收到畫面訊息', true);
   const log = await hostLog();
   ok('host 用信令伺服器的請求', log.includes('（信令伺服器）'));
-  ok('位址檢查通過', /選用 pair: 100\.\S+ → /.test(log) && !log.includes('不在允許網段內'), log.split('\n').filter((l) => l.includes('選用 pair')).join(' | '));
+  ok('位址檢查通過', (ANY_NET ? /選用 pair: \S+ → / : /選用 pair: 100\.\S+ → /).test(log) && !log.includes('不在允許網段內'), log.split('\n').filter((l) => l.includes('選用 pair')).join(' | '));
 
   // 同一個伺服器再連一次：新的請求取代舊的
   const offer2 = await page.evaluate(async () => {

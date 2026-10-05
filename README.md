@@ -1,6 +1,6 @@
 # cctabgaze
 
-在另一台電腦的 Chrome 旁觀這台 Chrome 裡 AI（Claude in Chrome）正在操作的分頁，並可從那台操作（滑鼠、滾輪、鍵盤、輸入法、貼上）。
+在另一台電腦的 Chrome 旁觀這台 Chrome 裡 AI（Claude in Chrome）正在操作的分頁，並可從那台操作（滑鼠、滾輪、鍵盤、輸入法、貼上）。**手機也能看與操作**：開自架信令伺服器提供的網頁（PWA），見「信令伺服器」一節。
 
 ```
 viewer（本機）                       Google 同步                         host（遠端）
@@ -127,12 +127,15 @@ WebRTC 直連（Tailscale）◄══════ 畫面 ═══════�
 原始碼在 `src/`（TypeScript，ES modules），`tsc` 逐檔編譯到 `extension/`，沒有打包工具。`extension/` 裡的 `.js` 是編譯結果，不進版本控制；`manifest.json` 與 `.html` 才是手寫的。
 
 - `npm run build`：編譯。`npm run watch`：存檔就編譯。
-- `npm run check`：只做型別檢查（含測試）。
-- `npm test`：位址與網段解析的單元測試（Node 直接跑 TypeScript，不用先編譯）。
+- `npm run check`：只做型別檢查（插件、測試、伺服器、手機網頁）。
+- `npm test`：單元測試（位址與網段解析、信令中繼、手勢狀態機與鍵盤差異比對、畫面設定驗證；Node 直接跑 TypeScript，不用先編譯）。
 - `npm run e2e`：端對端測試。用本機的 Chrome 開一個全新設定檔（會跳出一個視窗），讓插件在同一個 Chrome 裡自己連自己，檢查畫面、滑鼠鍵盤、分頁列、結束連線。
+- `npm run e2e:signal`：手機 PWA 與信令伺服器的端對端測試，需要 [Bun](https://bun.sh)。起真的伺服器，插件當 host，用一般網頁（puppeteer 觸控模擬）當手機：握手、視訊畫面、點擊、捲動距離、雙指縮放、鍵盤、複製貼上、網址列、分頁列、畫面設定。機器沒有 Tailscale 位址（例如 CI）時設 `CG_E2E_ANY_NET=1`。
+- `npm run build:web`：把 `web/app.ts` 打包成 `web/app.js`（伺服器提供的手機網頁；`scripts/install-server.sh` 會自動執行）。
 - `npm run pack`：編譯並打包成 `cctabgaze.zip`，同時檢查包內檔案（缺檔、多檔、manifest 或 html 指到不存在的檔案、編譯結果比原始碼舊，都會失敗）。
 - `npm run bump -- patch|minor|major`：調整版本號。版本號只存在 `extension/manifest.json`。
-- 發版：調整版本號後推上 `main`，CI 檢查通過且這個版本還沒發過，就建立 tag `v<version>` 與 GitHub Release（附 zip）。版本號沒動的 push 只做檢查。
+- 發版：調整版本號後推上 `main`，CI 檢查通過且這個版本還沒發過，就建立 tag `v<version>` 與 GitHub Release（附 zip，內容只有插件；伺服器與手機網頁不在 zip 裡，從 repo 用 `scripts/install-server.sh` 安裝）。版本號沒動的 push 只做檢查。
+- CI：`release.yml` 做檢查、單元測試、編譯、打包、發版；`e2e.yml` 另外跑 `npm run e2e:signal`（xvfb 加 Chrome，不擋發版，穩定後可在 `release.yml` 加 `needs`）。`npm run e2e`（桌面 viewer 的端對端）要有畫面的 Chrome 與硬體編碼，只在本機跑。
 - 各執行環境之間的訊息格式都定義在 `src/protocol.ts`，欄位或 `type` 打錯會在編譯時報錯。viewer 經 DataChannel 送來的資料在 host 端的型別是 `unknown`，必須經過 `input()`、`tune()`、`doControl()` 的檢查才能用。
 
 ## 歷史

@@ -1,0 +1,50 @@
+# 手機 PWA 與信令伺服器的端對端測試（npm run e2e:signal）：起真的 Bun 伺服器、有畫面的 Chrome（xvfb）載入插件當 host，
+# 用一般網頁（puppeteer 觸控模擬）當手機，驗證握手、視訊畫面、點擊、捲動、縮放、鍵盤、複製貼上、網址列、分頁列、畫面設定。
+# CI 沒有 Tailscale 位址，所以設 CG_E2E_ANY_NET=1 允許所有網段；位址檢查的 Tailscale 網段邏輯由單元測試（npm test）涵蓋。
+# 獨立的 workflow：發版（release.yml）不等它。穩定之後可以在 release.yml 加 needs。
+name: e2e
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  e2e-signal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: npm ci
+
+      - name: Chrome 與 xvfb
+        run: |
+          command -v google-chrome >/dev/null || { echo "::error::runner 上沒有 google-chrome"; exit 1; }
+          command -v xvfb-run >/dev/null || { sudo apt-get update && sudo apt-get install -y xvfb; }
+          google-chrome --version
+          bun --version
+
+      - name: e2e:signal
+        env:
+          CHROME: /usr/bin/google-chrome
+          CG_E2E_ANY_NET: "1"
+        run: xvfb-run -a --server-args="-screen 0 1400x1000x24" npm run e2e:signal

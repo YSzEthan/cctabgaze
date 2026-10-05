@@ -1,7 +1,7 @@
 # main 每次 push：型別檢查、單元測試、編譯、打包檢查。
 # 版本號只存在 extension/manifest.json（npm run bump 調整）。這個版本還沒有 tag 才發版：
 # tag 是 v<version>，zip 附在 GitHub Release；版本號沒動的 push 只做檢查，不發版。
-# 端對端測試（npm run e2e）要開有畫面的 Chrome，不在 CI 跑。
+# 桌面 viewer 的端對端測試（npm run e2e）要開有畫面的 Chrome，不在 CI 跑；手機 PWA 的 e2e:signal 在 e2e.yml。
 name: build-release
 
 on:

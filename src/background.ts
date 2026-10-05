@@ -167,7 +167,7 @@ async function stepOnce(s: Session) {
         else {
           s.perf.sent++;
           s.pending = data; s.pendingAt = Date.now(); s.pendingSeq = ++s.seq; sentFrame = true;
-          toOff({ type: 'frame', b64: data, state, tabId, ts: Date.now(), seq: s.seq, fmt: cfg.format, video }, s);
+          toOff({ type: 'frame', b64: data, state, tabId, ts: Date.now(), seq: s.seq, fmt: cfg.format, video, vw: s.view?.w ?? 0 }, s);
         }
       }
     }

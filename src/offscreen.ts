@@ -169,7 +169,7 @@ const toBytes = (b64: string) => Uint8Array.fromBase64?.(b64) ?? decodeBase64(b6
 function sendFrame(c: Conn, ch: RTCDataChannel, m: Extract<OffBody, { type: 'frame' }>) {
   const u = toBytes(m.b64);
   const CH = Math.min(60000, c.pc.sctp?.maxMessageSize || 60000);
-  wire(ch, { type: 'h', chunks: Math.ceil(u.length / CH), state: m.state, tabId: m.tabId, ts: m.ts, fmt: m.fmt } satisfies FrameHead);
+  wire(ch, { type: 'h', chunks: Math.ceil(u.length / CH), state: m.state, tabId: m.tabId, ts: m.ts, fmt: m.fmt, vw: m.vw } satisfies FrameHead);
   for (let i = 0; i < u.length; i += CH) ch.send(u.subarray(i, i + CH));
   const done = () => { ch.onbufferedamountlow = null; send(c, { type: 'ready', seq: m.seq }); };
   ch.onbufferedamountlow = done;
@@ -197,7 +197,7 @@ async function sendVideo(c: Conn, ch: RTCDataChannel, v: VideoOut, m: Extract<Of
     v.bmp = bmp;
     await writeBmp(v);
     if (c !== cur || ch.readyState !== 'open') return;
-    wire(ch, { type: 'v', state: m.state, tabId: m.tabId, ts: m.ts });
+    wire(ch, { type: 'v', state: m.state, tabId: m.tabId, ts: m.ts, vw: m.vw });
     send(c, { type: 'ready', seq: m.seq });
   } catch (e) {
     videoFailed(c, e);

@@ -1,11 +1,14 @@
 <!doctype html><meta charset="utf-8"><title>負載測試頁</title>
 <style>html,body{margin:0;height:100%;font:48px ui-monospace,monospace;background:#fff}#t{position:fixed;left:16px;top:48px}canvas{width:100%;height:100%;display:block}</style>
-<canvas id="c"></canvas><div id="t"></div>
+<canvas id="c"></canvas><div id="t"></div><textarea id="ta" style="position:fixed;left:50%;top:50%;width:300px;height:60px;transform:translate(-50%,-50%);font-size:20px"></textarea>
 <script>
 // 時鐘加持續重繪的色塊：每個影格都有變化。window.__ev 記錄收到的輸入，給端對端測試讀。
 // 最上面 40px 是條碼：白、黑兩格定位，接著 32 格是 Date.now() 的低 32 位元，給 proto-video 量從繪製到解碼的延遲
 window.__ev = [];
 for (const k of ['click', 'keydown']) addEventListener(k, (e) => __ev.push(k + ':' + (e.key || Math.round(e.clientX) + ',' + Math.round(e.clientY))));
+for (const k of ['mousedown', 'mouseup']) addEventListener(k, (e) => __ev.push(k + ':' + e.detail)); // detail：clickCount
+addEventListener('wheel', (e) => __ev.push('wheel:' + Math.round(e.deltaY)), { passive: true });
+document.getElementById('ta').addEventListener('input', (e) => __ev.push('input:' + e.target.value));
 const c = document.getElementById('c'), g = c.getContext('2d'), t = document.getElementById('t');
 let n = 0;
 function draw() {

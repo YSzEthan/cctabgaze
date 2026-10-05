@@ -35,8 +35,8 @@ export type CtlMsg =
   | { type: 'error'; message: string }
   | { type: 'copied'; text: string }
   | { type: 'tabs'; cur: number | null; pinned: boolean; tabs: TabInfo[] };
-export interface FrameHead { type: 'h'; chunks: number; state: AiState; tabId: number; ts: number; fmt: Format }
-export interface VideoHead { type: 'v'; state: AiState; tabId: number; ts: number } // 視訊模式：像素在視訊軌裡，這筆只帶中繼資料
+export interface FrameHead { type: 'h'; chunks: number; state: AiState; tabId: number; ts: number; fmt: Format; vw?: number } // vw：host 可視區的 CSS 寬度（截圖是裝置像素，捲動距離要用它換算）；舊版 host 沒有
+export interface VideoHead { type: 'v'; state: AiState; tabId: number; ts: number; vw?: number } // 視訊模式：像素在視訊軌裡，這筆只帶中繼資料
 export type EndMsg = { type: 'end'; reason: EndReason };
 export type HostWire = FrameHead | VideoHead | CtlMsg | EndMsg;
 
@@ -62,7 +62,7 @@ export type SwMsg = { target: 'sw'; id?: string } & (FromHostOff | FromViewerOff
 // ---- 背景程式 → host 端 offscreen ----
 export type OffBody =
   | EndMsg
-  | { type: 'frame'; b64: string; state: AiState; tabId: number; ts: number; seq: number; fmt: Format; video: boolean }
+  | { type: 'frame'; b64: string; state: AiState; tabId: number; ts: number; seq: number; fmt: Format; video: boolean; vw: number }
   | { type: 'ctl'; msg: CtlMsg }
   | { type: 'reset' };
 export type OfferMsg = { target: 'offscreen'; type: 'offer'; id: string; sdp: string; nets: unknown; lax: boolean };

@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>cctabgaze</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -12,24 +12,28 @@
 <style>
   :root { --bg:#fafafa; --fg:#222; --mute:#666; --line:#8884; --on:#1a73e8; }
   @media (prefers-color-scheme: dark) { :root { --bg:#111; --fg:#eee; --mute:#999; } }
-  html, body { height:100%; margin:0; background:var(--bg); color:var(--fg); font:15px system-ui, sans-serif; }
-  body { display:flex; flex-direction:column; padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); box-sizing:border-box; }
+  html, body { height:100%; margin:0; overscroll-behavior:none; background:var(--bg); color:var(--fg); font:15px system-ui, sans-serif; }
+  body { position:fixed; left:0; right:0; top:0; display:flex; flex-direction:column; padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); box-sizing:border-box; }
   header { display:flex; gap:8px; align-items:center; padding:8px 12px; border-bottom:1px solid var(--line); }
   #status { flex:1; min-width:0; color:var(--mute); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   button { font:inherit; padding:6px 14px; }
-  #stage { flex:1; min-height:0; display:flex; align-items:center; justify-content:center; padding:0 16px; text-align:center; }
-  #img, #vid { max-width:100%; max-height:100%; object-fit:contain; user-select:none; -webkit-user-drag:none; touch-action:none; }
-  #msg { color:var(--mute); }
-  #setup { display:flex; flex-direction:column; gap:8px; width:100%; max-width:22em; }
-  #setup input { font:inherit; padding:8px; }
+  #stage { position:relative; flex:1; min-height:0; overflow:hidden; text-align:center; touch-action:none; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; }
+  #zoom { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; transform-origin:0 0; }
+  #img, #vid { max-width:100%; max-height:100%; object-fit:contain; -webkit-user-drag:none; }
+  #msg, #setup { position:absolute; left:50%; top:50%; transform:translate(-50%, -50%); }
+  #msg { color:var(--mute); width:calc(100% - 32px); pointer-events:none; }
+  #setup { display:flex; flex-direction:column; gap:8px; width:calc(100% - 32px); max-width:22em; }
+  #kb { position:fixed; left:0; top:0; width:1px; height:1px; opacity:0; border:0; padding:0; resize:none; font-size:16px; pointer-events:none; }
+  #toast { position:fixed; left:50%; bottom:calc(24px + env(safe-area-inset-bottom)); transform:translateX(-50%); max-width:calc(100% - 32px); padding:8px 14px; border-radius:8px; background:#000c; color:#fff; pointer-events:none; }
+  button.on { background:var(--on); color:#fff; border:1px solid var(--on); border-radius:4px; }
+  #setup input { font:inherit; font-size:16px; padding:8px; } /* 16px 以下 iOS 一 focus 就會放大整頁 */
   [hidden] { display:none !important; }
 </style>
 </head>
 <body>
-<header><strong>cctabgaze</strong><span id="status"></span><button id="go">連線</button></header>
+<header><strong>cctabgaze</strong><span id="status"></span><button id="copy">複製</button><button id="paste">貼上</button><button id="kbd">鍵盤</button><button id="go">連線</button></header>
 <main id="stage">
-  <img id="img" alt="" hidden>
-  <video id="vid" muted autoplay playsinline hidden></video>
+  <div id="zoom"><img id="img" alt="" hidden><video id="vid" muted autoplay playsinline hidden></video></div>
   <div id="msg"></div>
   <form id="setup" hidden>
     <label for="token">token（伺服器 ~/.config/cctabgaze/token 的內容）</label>
@@ -37,6 +41,8 @@
     <button>儲存並連線</button>
   </form>
 </main>
+<div id="toast" hidden></div>
+<textarea id="kb" autocorrect="off" autocapitalize="off" autocomplete="off" spellcheck="false" aria-label="鍵盤輸入"></textarea>
 <script src="/app.js"></script>
 </body>
 </html>

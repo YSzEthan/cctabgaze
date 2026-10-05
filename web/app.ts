@@ -1,7 +1,8 @@
 // 手機（或任何瀏覽器）viewer：向信令伺服器 POST offer 換到 answer，再經 WebRTC 看 host 的畫面。
 // 目前只看畫面（輸入、分頁列、設定在後續階段）。對方位址手機瀏覽器讀不到，安全靠 token 與 Tailscale，檢查在 host 端做。
 import { gathered } from '../src/rtc.ts';
-import type { AiState, EndReason, FrameHead, HostWire } from '../src/protocol.ts';
+import { initInput } from './input.ts';
+import type { AiState, EndReason, FrameHead, HostWire, PageEv } from '../src/protocol.ts';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const vid = $<HTMLVideoElement>('vid'), img = $<HTMLImageElement>('img');
@@ -28,11 +29,16 @@ if (hash?.[1]) { token.set(decodeURIComponent(hash[1])); history.replaceState(nu
 
 // ---- 畫面 ----
 const setStatus = (t: string) => { $('status').textContent = t; };
+let toastTimer: ReturnType<typeof setTimeout> | undefined;
+const toast = (t: string) => { $('toast').textContent = t; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('toast').hidden = true; }, 2500); };
 const setMsg = (t: string) => { $('msg').textContent = t; $('msg').hidden = !t; };
 const showSetup = (on: boolean) => { $('setup').hidden = !on; if (on) { vid.hidden = img.hidden = true; setMsg(''); $('token').focus(); } };
 
 interface Conn {
   pc: RTCPeerConnection;
+  dc: RTCDataChannel;
+  tabId: number | null; // host 目前截的分頁；輸入要帶上它，host 發現已經換分頁就丟棄
+  vw: number | undefined; // host 可視區的 CSS 寬度，捲動距離換算用
   frame: { m: FrameHead; parts: ArrayBuffer[] } | null;
   lastRx: number;
   watch: ReturnType<typeof setInterval> | undefined;
@@ -42,7 +48,9 @@ interface Conn {
 let cur: Conn | null = null;
 
 function stop() {
-  const c = cur; cur = null;
+  const c = cur;
+  input.release(); // 在 cur 清掉之前：放開按住中的滑鼠鍵還要送得出去
+  cur = null;
   if (!c) return;
   clearInterval(c.watch);
   c.pc.onconnectionstatechange = null;
@@ -81,11 +89,12 @@ async function connect() {
   if (!t) return showSetup(true);
   showSetup(false);
   stop();
+  input.resetZoom();
   setStatus('連線中…'); setMsg('連線中…'); $('go').textContent = '連線中';
   const pc = new RTCPeerConnection({ iceServers: [], bundlePolicy: 'max-bundle' });
   const dc = pc.createDataChannel('v');
   dc.binaryType = 'arraybuffer';
-  const c: Conn = cur = { pc, frame: null, lastRx: Date.now(), watch: undefined, urls: [], view: null };
+  const c: Conn = cur = { pc, dc, tabId: null, vw: undefined, frame: null, lastRx: Date.now(), watch: undefined, urls: [], view: null };
   addVideo(pc);
   pc.ontrack = (e) => { if (c === cur && e.track.kind === 'video') { vid.srcObject = new MediaStream([e.track]); vid.play().catch(() => {}); } };
   dc.onmessage = (e) => onData(c, e);
@@ -125,10 +134,12 @@ function onData(c: Conn, e: MessageEvent) {
   }
   let m: HostWire;
   try { m = JSON.parse(e.data); } catch { return; }
+  if (m.type === 'h' || m.type === 'v') { c.tabId = m.tabId; c.vw = m.vw; }
   if (m.type === 'h') c.frame = { m, parts: [] };
   if (m.type === 'v') { c.view = 'vid'; setStatus(STATE_TEXT[m.state] ?? ''); }
   if (m.type === 'same') setStatus(STATE_TEXT[m.state] ?? '');
   if (m.type === 'error') { vid.hidden = img.hidden = true; setMsg(m.message); }
+  if (m.type === 'copied' && typeof m.text === 'string') pendingCopy?.(m.text);
   if (m.type === 'end') end(c, END_TEXT[m.reason] ?? '連線已結束');
 }
 function showImage(c: Conn, m: FrameHead, parts: ArrayBuffer[]) {
@@ -146,6 +157,47 @@ const onVideoFrame = () => {
   vid.hidden = false; img.hidden = true; setMsg('');
 };
 vid.requestVideoFrameCallback(onVideoFrame);
+
+// ---- 輸入：送出前帶上 tabId，連線沒開著就丟掉 ----
+const send = (ev: PageEv) => { if (cur && cur.tabId != null && cur.dc.readyState === 'open') cur.dc.send(JSON.stringify({ ...ev, tabId: cur.tabId })); };
+const input = initInput({
+  send,
+  media: () => {
+    if (!cur) return null;
+    if (cur.view === 'vid') return { el: vid, nw: vid.videoWidth, nh: vid.videoHeight, vw: cur.vw };
+    return { el: img, nw: img.naturalWidth, nh: img.naturalHeight, vw: cur.vw };
+  },
+});
+
+// ---- 複製：host 目前選取的文字 → 這支手機的剪貼簿。寫入剪貼簿要在點擊的當下，host 的回覆會晚到，
+// 所以點擊時先把「還沒完成的文字」交給 ClipboardItem（Safari 與 Chrome 都支援 Promise），回覆到了才填入；不支援的瀏覽器退回「收到後再按一次」----
+let pendingCopy: ((t: string) => void) | null = null, held: string | null = null;
+$('copy').onclick = async () => {
+  if (held != null) { const t = held; held = null; return navigator.clipboard.writeText(t).then(() => toast(`已複製 ${Array.from(t).length} 字`), () => toast('無法寫入剪貼簿')); }
+  if (!cur) return;
+  const text = new Promise<string>((res, rej) => { pendingCopy = res; setTimeout(() => rej(new Error('timeout')), 3000); });
+  text.catch(() => {}).finally(() => { pendingCopy = null; });
+  send({ type: 'copy' });
+  try {
+    if (!('ClipboardItem' in window) || !navigator.clipboard?.write) { held = await text; return toast(`已收到 ${Array.from(held).length} 字，再按一次「複製」寫入`); }
+    let n = 0;
+    await navigator.clipboard.write([new ClipboardItem({ 'text/plain': text.then((t) => { n = Array.from(t).length; return new Blob([t], { type: 'text/plain' }); }) })]);
+    toast(`已複製 ${n} 字`);
+  } catch (e) {
+    toast(e instanceof Error && e.name === 'NotAllowedError' ? '瀏覽器不允許寫入剪貼簿' : 'host 沒有選取的文字');
+  }
+};
+
+// 貼上：讀手機的剪貼簿（iOS 會跳出「貼上」確認，一定要在點擊的當下讀）再送給 host
+$('paste').onclick = async () => {
+  if (!cur) return;
+  try {
+    const t = await navigator.clipboard.readText();
+    if (!t) return toast('手機的剪貼簿是空的');
+    input.typeText(t);
+    toast(`已貼上 ${Array.from(t).length} 字`);
+  } catch { toast('無法讀取手機的剪貼簿'); }
+};
 
 $('go').onclick = () => { connect(); };
 $('setup').onsubmit = (e) => {

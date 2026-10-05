@@ -7,7 +7,7 @@
     "build:web": "bun build web/app.ts --outfile web/app.js --target browser",
     "watch": "tsc --watch",
     "check": "tsc --noEmit && tsc -p test && tsc -p server && tsc -p web",
-    "test": "node test/rtc.test.ts && node test/relay.test.ts && node test/gesture.test.ts",
+    "test": "node test/rtc.test.ts && node test/relay.test.ts && node test/gesture.test.ts && node test/tune.test.ts",
     "e2e": "tsc && node test/e2e.ts",
     "e2e:signal": "tsc && node test/e2e-signal.ts",
     "bump": "node scripts/bump.ts",

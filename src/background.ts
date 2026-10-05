@@ -4,7 +4,8 @@
 import './viewer-bg.ts'; // viewer 端的大腦，和 host 共用同一個背景程式
 import { REQ, RES, slog, ensureOffscreen, errText } from './shared.ts';
 import { startSignal } from './signal.ts';
-import type { AiState, EndReason, Format, Mode, Msg, OffBody, OfferMsg, Reply, Req, Res, Transport, Tune, Untrusted } from './protocol.ts';
+import { DEFAULT_TUNE, parseTune } from './tune.ts';
+import type { AiState, EndReason, Msg, OffBody, OfferMsg, Reply, Req, Res, Transport, Tune, Untrusted } from './protocol.ts';
 
 type Tab = chrome.tabs.Tab;
 type Group = chrome.tabGroups.TabGroup;
@@ -41,8 +42,6 @@ function perfTick(s: Session) {
 }
 
 // 畫面設定由 viewer 的懸浮視窗選、經 DataChannel 送來（tune 訊息），這裡只接受白名單內的值
-const QUALITIES: unknown[] = [30, 50, 75, 90], RATES: unknown[] = [200, 100, 66, 40, 0], FORMATS: unknown[] = ['jpeg', 'webp', 'png'], MODES: unknown[] = ['video', 'image'];
-const DEFAULT_TUNE: Tune = { quality: 50, fast: 0, format: 'jpeg', mode: 'video' }; // fast：畫面有變化時，上一張送達後最短隔多少毫秒再截下一張（0＝不限）
 const VIDEO_SHOT: Tune = { ...DEFAULT_TUNE, quality: 90 }; // 視訊模式的截圖：JPEG 90 和 PNG 一樣快，比 50 少一次重壓損失
 const MIN_INTERVAL = 500, INPUT_BOOST = 2000, FALLBACK = 3000, PENDING_TTL = 10000, SHOT_TIMEOUT = 5000, REQ_TTL = 60000;
 const AI_TITLES = new Set(['Claude', 'Claude (MCP)']);
@@ -232,12 +231,7 @@ function input(ev: Untrusted | null) {
 // ---- viewer 的畫面設定：只認白名單內的值，其餘用預設 ----
 function tune(ev: Untrusted) {
   if (!session) return;
-  session.tune = {
-    quality: QUALITIES.includes(ev.quality) ? ev.quality as number : DEFAULT_TUNE.quality,
-    fast: RATES.includes(ev.fast) ? ev.fast as number : DEFAULT_TUNE.fast,
-    format: FORMATS.includes(ev.format) ? ev.format as Format : DEFAULT_TUNE.format,
-    mode: MODES.includes(ev.mode) ? ev.mode as Mode : DEFAULT_TUNE.mode,
-  };
+  session.tune = parseTune(ev);
   session.lastData = null; // 換了格式或品質，下一張不能和舊的比對
   slog('畫面設定：', JSON.stringify(session.tune));
 }

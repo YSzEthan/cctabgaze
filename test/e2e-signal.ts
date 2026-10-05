@@ -193,6 +193,85 @@ try {
   ok('貼上：host 輸入框收到手機剪貼簿的文字（含換行）', pasted === '貼上測試\n第二行', JSON.stringify(pasted));
   ok('貼上：顯示已貼上', (await toastText()) === '已貼上 8 字', await toastText());
 
+  // ---- 網址列、上一頁／下一頁／重新整理、分頁列 ----
+  const tabsInfo = () => pwa.$$eval('#tablist .tab', (els) => els.map((e) => ({ id: e.getAttribute('data-id')!, on: e.classList.contains('on'), x: !!e.querySelector('.x'), name: e.querySelector('.name')!.textContent })));
+  const typeUrl = async (url: string) => { await pwa.$eval('#addr', (a) => { (a as HTMLInputElement).focus(); (a as HTMLInputElement).select(); }); await pwa.keyboard.type(url); await pwa.keyboard.press('Enter'); };
+  const hostMarker = () => page.evaluate(() => (window as any).__marker);
+  await until('網址列顯示 host 目前網址', async () => (await pwa.$eval('#addr', (a) => (a as HTMLInputElement).value)) === page.url());
+  ok('網址列顯示 host 目前網址', true, page.url());
+  let tl = await tabsInfo();
+  ok('分頁列有一個目前分頁，且有 ×', tl.length === 1 && tl[0]!.on && tl[0]!.x, JSON.stringify(tl));
+
+  await typeUrl(site.url + '?static');
+  await until('Enter 導向 host 的分頁', async () => page.url().endsWith('?static'));
+  ok('網址列 Enter → host 分頁導向', true, page.url());
+  ok('送出後網址框失焦（不叫出隱藏的鍵盤）', await pwa.evaluate(() => document.activeElement?.id !== 'addr' && document.activeElement?.id !== 'kb'));
+
+  await page.evaluate(() => { (window as any).__marker = 1; });
+  await pwa.tap('#reload');
+  await until('⟳ → host 分頁重新載入', async () => (await hostMarker()) === undefined);
+  ok('⟳ → host 分頁重新載入', true);
+  await pwa.tap('#back');
+  await until('‹ → host 回到上一頁', async () => page.url() === site.url);
+  ok('‹ → host 回到上一頁', true, page.url());
+  await pwa.tap('#fwd');
+  await until('› → host 前往下一頁', async () => page.url().endsWith('?static'));
+  ok('› → host 前往下一頁', true, page.url());
+
+  // ＋ 開新分頁：它是 about:blank，截不到畫面；在網址列輸入網址要導向它（nav 的 tabId 必須是 tabs.cur，不是畫面標頭的 tabId）
+  await pwa.tap('#newtab');
+  tl = await until('分頁列出現第二個分頁', async () => { const t = await tabsInfo(); return t.length === 2 ? t : null; });
+  const [origId, newId] = [tl.find((t) => !t.on)!.id, tl.find((t) => t.on)!.id];
+  ok('＋ 新分頁成為目前分頁，並出現「自動」', await pwa.$eval('#auto', (b) => !(b as HTMLElement).hidden));
+  await typeUrl(site.url + '?static');
+  await until('新分頁導向網址（tabId 來自 tabs.cur）', async () => (await tabsInfo()).find((t) => t.id === newId)?.name === '負載測試頁');
+  ok('在新分頁的網址列輸入網址 → 新分頁導向', true);
+
+  // 分頁列上橫向拖動不能切換分頁；點選才切換
+  const origBox = await pwa.$eval(`.tab[data-id="${origId}"]`, (e) => { const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+  const th = await pwa.touchscreen.touchStart(origBox.x, origBox.y);
+  for (let i = 1; i <= 6; i++) { await th.move(origBox.x + i * 10, origBox.y); await sleep(30); }
+  await th.end();
+  await sleep(700);
+  ok('分頁列橫向拖動不會切換分頁', (await tabsInfo()).find((t) => t.on)?.id === newId, JSON.stringify(await tabsInfo()));
+  await pwa.tap(`.tab[data-id="${origId}"]`);
+  await until('點選分頁 → 切換', async () => (await tabsInfo()).find((t) => t.on)?.id === origId);
+  ok('點選分頁 → 切換', true);
+  await pwa.tap('#auto');
+  await until('「自動」→ 回到跟隨 AI（按鈕消失）', async () => pwa.$eval('#auto', (b) => (b as HTMLElement).hidden));
+  ok('「自動」→ 回到跟隨 AI', true);
+  await pwa.tap(`.tab[data-id="${newId}"]`);
+  await until('切到新分頁', async () => (await tabsInfo()).find((t) => t.on)?.id === newId);
+  await pwa.tap(`.tab[data-id="${newId}"] .x`);
+  await until('× → 關閉新分頁', async () => (await tabsInfo()).length === 1);
+  ok('× → 關閉分頁', true);
+  await pwa.tap('.tab.on .x'); // 群組只剩一個分頁：host 不會關（關光等於 AI 結束）
+  await sleep(1200);
+  ok('只剩一個分頁時 × 不會關', (await tabsInfo()).length === 1 && !page.isClosed());
+
+  // 網址框有焦點時點畫面：網址框失焦
+  await pwa.$eval('#addr', (a) => (a as HTMLInputElement).focus());
+  const vb = await vidBox();
+  await pwa.touchscreen.tap(vb.x + vb.w / 2, vb.y + vb.h / 2);
+  await sleep(400);
+  ok('網址框有焦點時點畫面 → 網址框失焦', await pwa.evaluate(() => document.activeElement?.id !== 'addr'));
+
+  // 畫面設定：改成圖片 → PWA 顯示圖片；重新載入（重連）後仍是圖片（重連重送 tune）；選回視訊
+  await pwa.tap('#settings');
+  ok('設定面板打開，傳輸選視訊時品質與格式停用', await pwa.evaluate(() => !(document.getElementById('prefs') as HTMLElement).hidden && (document.getElementById('tune-quality') as HTMLSelectElement).disabled));
+  await pwa.select('#tune-mode', 'image');
+  await until('改成圖片模式', async () => (await shownView()) === 'img', 15000);
+  ok('設定「圖片」→ 畫面改走圖片', true);
+  ok('圖片模式時品質與格式啟用', await pwa.evaluate(() => !(document.getElementById('tune-quality') as HTMLSelectElement).disabled));
+  await pwa.reload();
+  await until('重新載入後仍是圖片模式（重連重送 tune）', async () => (await shownView()) === 'img', 25000);
+  ok('重新連線後仍是圖片模式', true);
+  await pwa.tap('#settings');
+  await pwa.select('#tune-mode', 'video');
+  await until('選回視訊', async () => (await shownView()) === 'vid', 15000);
+  ok('設定選回「視訊」', true);
+  ok('網頁導覽與設定沒有未捕捉的錯誤', !pwaErrors.length, pwaErrors.join(' | '));
+
   await pwa.evaluate(() => localStorage.setItem('cg_token', 'wrong-token-wrong-token-wrong'));
   await pwa.reload();
   ok('token 錯誤時顯示輸入欄', !!(await until('輸入欄', () => pwa.evaluate(() => (document.getElementById('setup') as HTMLElement).hidden === false ? true : null), 10000)));

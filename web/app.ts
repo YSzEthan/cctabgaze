@@ -2,7 +2,8 @@
 // 目前只看畫面（輸入、分頁列、設定在後續階段）。對方位址手機瀏覽器讀不到，安全靠 token 與 Tailscale，檢查在 host 端做。
 import { gathered } from '../src/rtc.ts';
 import { initInput } from './input.ts';
-import type { AiState, EndReason, FrameHead, HostWire, PageEv } from '../src/protocol.ts';
+import { initPanel } from './panel.ts';
+import type { AiState, CtlEv, EndReason, FrameHead, HostWire, PageEv, Tune } from '../src/protocol.ts';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const vid = $<HTMLVideoElement>('vid'), img = $<HTMLImageElement>('img');
@@ -39,6 +40,7 @@ interface Conn {
   dc: RTCDataChannel;
   tabId: number | null; // host 目前截的分頁；輸入要帶上它，host 發現已經換分頁就丟棄
   vw: number | undefined; // host 可視區的 CSS 寬度，捲動距離換算用
+  tuneSent: boolean; // 收到 host 第一筆資料才送畫面設定：這時 host 已通過位址檢查，會接受；每條連線各一次，重連自然重送
   frame: { m: FrameHead; parts: ArrayBuffer[] } | null;
   lastRx: number;
   watch: ReturnType<typeof setInterval> | undefined;
@@ -50,6 +52,7 @@ let cur: Conn | null = null;
 function stop() {
   const c = cur;
   input.release(); // 在 cur 清掉之前：放開按住中的滑鼠鍵還要送得出去
+  panel.render(null); // 分頁清單與網址屬於上一條連線
   cur = null;
   if (!c) return;
   clearInterval(c.watch);
@@ -64,7 +67,7 @@ function end(c: Conn, text: string) { // 連線結束的出口：只處理目前
   setStatus(text);
   vid.hidden = img.hidden = true;
   setMsg(text);
-  $('go').textContent = '重新連線';
+  $('go').hidden = false; $('go').textContent = '重新連線';
 }
 
 // 要硬體編碼的那幾組 H264（packetization-mode=1；Safari 是 640c1f 與 42e01f）。瀏覽器沒有 H264 就不要視訊，host 會改走圖片
@@ -90,11 +93,11 @@ async function connect() {
   showSetup(false);
   stop();
   input.resetZoom();
-  setStatus('連線中…'); setMsg('連線中…'); $('go').textContent = '連線中';
+  setStatus('連線中…'); setMsg('連線中…'); $('go').hidden = true;
   const pc = new RTCPeerConnection({ iceServers: [], bundlePolicy: 'max-bundle' });
   const dc = pc.createDataChannel('v');
   dc.binaryType = 'arraybuffer';
-  const c: Conn = cur = { pc, dc, tabId: null, vw: undefined, frame: null, lastRx: Date.now(), watch: undefined, urls: [], view: null };
+  const c: Conn = cur = { pc, dc, tabId: null, vw: undefined, tuneSent: false, frame: null, lastRx: Date.now(), watch: undefined, urls: [], view: null };
   addVideo(pc);
   pc.ontrack = (e) => { if (c === cur && e.track.kind === 'video') { vid.srcObject = new MediaStream([e.track]); vid.play().catch(() => {}); } };
   dc.onmessage = (e) => onData(c, e);
@@ -126,6 +129,7 @@ const MIME: Record<string, string> = { jpeg: 'image/jpeg', webp: 'image/webp', p
 function onData(c: Conn, e: MessageEvent) {
   if (c !== cur) return;
   c.lastRx = Date.now();
+  if (!c.tuneSent) { c.tuneSent = true; sendTune(panel.tune()); }
   if (typeof e.data !== 'string') {
     if (!c.frame) return;
     c.frame.parts.push(e.data);
@@ -140,6 +144,7 @@ function onData(c: Conn, e: MessageEvent) {
   if (m.type === 'same') setStatus(STATE_TEXT[m.state] ?? '');
   if (m.type === 'error') { vid.hidden = img.hidden = true; setMsg(m.message); }
   if (m.type === 'copied' && typeof m.text === 'string') pendingCopy?.(m.text);
+  if (m.type === 'tabs' && Array.isArray(m.tabs)) panel.render(m);
   if (m.type === 'end') end(c, END_TEXT[m.reason] ?? '連線已結束');
 }
 function showImage(c: Conn, m: FrameHead, parts: ArrayBuffer[]) {
@@ -160,6 +165,10 @@ vid.requestVideoFrameCallback(onVideoFrame);
 
 // ---- 輸入：送出前帶上 tabId，連線沒開著就丟掉 ----
 const send = (ev: PageEv) => { if (cur && cur.tabId != null && cur.dc.readyState === 'open') cur.dc.send(JSON.stringify({ ...ev, tabId: cur.tabId })); };
+// 控制訊息（nav／tab／tune）原樣送出：tabId 由呼叫端決定（tab select／close 的 tabId 是目標分頁，不是目前分頁），也不要求已經有畫面
+const sendCtl = (ev: CtlEv) => { if (cur?.dc.readyState === 'open') cur.dc.send(JSON.stringify(ev)); };
+const sendTune = (t: Tune) => { if (cur?.tuneSent) cur.dc.send(JSON.stringify({ type: 'tune', ...t })); };
+const panel = initPanel({ sendCtl, sendTune });
 const input = initInput({
   send,
   media: () => {

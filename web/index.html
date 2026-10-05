@@ -14,9 +14,25 @@
   @media (prefers-color-scheme: dark) { :root { --bg:#111; --fg:#eee; --mute:#999; } }
   html, body { height:100%; margin:0; overscroll-behavior:none; background:var(--bg); color:var(--fg); font:15px system-ui, sans-serif; }
   body { position:fixed; left:0; right:0; top:0; display:flex; flex-direction:column; padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); box-sizing:border-box; }
-  header { display:flex; gap:8px; align-items:center; padding:8px 12px; border-bottom:1px solid var(--line); }
+  #navbar, #tabs, #bar { display:flex; gap:6px; align-items:center; padding:6px 8px; }
+  #navbar { border-bottom:1px solid var(--line); }
+  #bar { border-top:1px solid var(--line); }
+  #navbar[inert], #tabs[inert] { opacity:.5; }
+  #addr { flex:1; min-width:0; font:inherit; font-size:16px; padding:8px; } /* 16px 以下 iOS 一 focus 就會放大整頁 */
+  #tabs { border-bottom:1px solid var(--line); }
+  #tablist { display:flex; gap:6px; flex:1; min-width:0; overflow-x:auto; touch-action:pan-x; scrollbar-width:none; }
+  .tab { display:flex; gap:6px; align-items:center; flex:none; max-width:11em; padding:6px 10px; border:1px solid var(--line); border-radius:6px; }
+  .tab.on { background:#1a73e822; border-color:var(--on); }
+  .tab .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tab .x { color:var(--mute); padding:0 4px; font-size:18px; line-height:1; }
   #status { flex:1; min-width:0; color:var(--mute); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  button { font:inherit; padding:6px 14px; }
+  button { font:inherit; min-height:40px; padding:6px 12px; }
+  #tabtoggle { display:none; }
+  @media (orientation: landscape) and (max-height: 500px) { #tabs:not(.show) { display:none; } #tabtoggle { display:inline-block; } }
+  #prefs { position:absolute; left:0; right:0; bottom:100%; padding:10px 12px; background:var(--bg); border-top:1px solid var(--line); display:grid; grid-template-columns:auto 1fr; gap:8px 12px; align-items:center; }
+  #prefs select { font:inherit; font-size:16px; padding:6px; }
+  #prefs select:disabled { opacity:.5; }
+  #bar { position:relative; }
   #stage { position:relative; flex:1; min-height:0; overflow:hidden; text-align:center; touch-action:none; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; }
   #zoom { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; transform-origin:0 0; }
   #img, #vid { max-width:100%; max-height:100%; object-fit:contain; -webkit-user-drag:none; }
@@ -31,7 +47,8 @@
 </style>
 </head>
 <body>
-<header><strong>cctabgaze</strong><span id="status"></span><button id="copy">複製</button><button id="paste">貼上</button><button id="kbd">鍵盤</button><button id="go">連線</button></header>
+<form id="navbar" inert><button type="button" id="back" title="上一頁">‹</button><button type="button" id="fwd" title="下一頁">›</button><button type="button" id="reload" title="重新整理">⟳</button><input id="addr" type="text" inputmode="url" enterkeyhint="go" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" placeholder="輸入網址"></form>
+<nav id="tabs" inert><div id="tablist"></div><button id="newtab" title="新增分頁">＋</button><button id="auto" title="回到跟隨 AI" hidden>自動</button></nav>
 <main id="stage">
   <div id="zoom"><img id="img" alt="" hidden><video id="vid" muted autoplay playsinline hidden></video></div>
   <div id="msg"></div>
@@ -41,6 +58,11 @@
     <button>儲存並連線</button>
   </form>
 </main>
+<footer id="bar">
+  <span id="status"></span>
+  <button id="tabtoggle">分頁</button><button id="copy">複製</button><button id="paste">貼上</button><button id="kbd">鍵盤</button><button id="settings">設定</button><button id="go">連線</button>
+  <div id="prefs" hidden></div>
+</footer>
 <div id="toast" hidden></div>
 <textarea id="kb" autocorrect="off" autocapitalize="off" autocomplete="off" spellcheck="false" aria-label="鍵盤輸入"></textarea>
 <script src="/app.js"></script>

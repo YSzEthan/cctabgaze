@@ -44,6 +44,8 @@ export function initInput({ send, media }: InputDeps) {
   zoomEl.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'mouse') return; // 桌面請用插件的 viewer
     const m = media();
+    const a = document.activeElement;
+    if (a instanceof HTMLInputElement) a.blur(); // 網址框有焦點時點畫面：touchstart 被擋掉所以焦點不會自己離開，使用者以為在 host 輸入，字卻進了網址框
     zoomEl.setPointerCapture(e.pointerId);
     run(down(g, e.pointerId, e.clientX, e.clientY, e.timeStamp, !!m && inside(toNorm(e.clientX, e.clientY, m))));
   });

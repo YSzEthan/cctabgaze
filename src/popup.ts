@@ -1,5 +1,6 @@
 import { DEFAULT_NETS, parseNets } from './rtc.ts';
 import { parseSignalUrl, type SignalConfig } from './signal.ts';
+import { DEFAULT_TUNE, TUNE_OPTIONS } from './tune.ts';
 import type { Tune } from './protocol.ts';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -60,11 +61,11 @@ $('netssave').onclick = async () => {
 };
 
 // ---- 畫面設定：存在 viewer 這台，背景程式會經 DataChannel 送給 host（host 只認白名單內的值）----
-const TUNE_DEFAULT: Tune = { quality: 50, fast: 0, format: 'jpeg', mode: 'video' };
 const fm = $<HTMLSelectElement>('fm'), fq = $<HTMLSelectElement>('fq'), fr = $<HTMLSelectElement>('fr'), ff = $<HTMLSelectElement>('ff');
+for (const [k, el] of [['mode', fm], ['quality', fq], ['fast', fr], ['format', ff]] as const) for (const o of TUNE_OPTIONS[k]) el.add(new Option(o.label, String(o.value))); // 選項與 host 白名單同一份（src/tune.ts）
 const readTune = (): Tune => ({ quality: Number(fq.value), fast: Number(fr.value), format: ff.value as Tune['format'], mode: fm.value as Tune['mode'] });
 chrome.storage.local.get<{ tune: Partial<Tune> }>('tune').then(({ tune }) => {
-  const t = { ...TUNE_DEFAULT, ...tune };
+  const t = { ...DEFAULT_TUNE, ...tune };
   fm.value = t.mode; fq.value = String(t.quality); fr.value = String(t.fast); ff.value = t.format;
 });
 for (const el of [fm, fq, fr, ff]) el.onchange = () => chrome.storage.local.set({ tune: readTune() });

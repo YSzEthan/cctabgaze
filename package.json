@@ -7,7 +7,9 @@
     "watch": "tsc --watch",
     "check": "tsc --noEmit && tsc -p test",
     "test": "node test/rtc.test.ts",
-    "e2e": "tsc && node test/e2e.ts"
+    "e2e": "tsc && node test/e2e.ts",
+    "bump": "node scripts/bump.ts",
+    "pack": "tsc && scripts/pack.sh cctabgaze.zip"
   },
   "devDependencies": {
     "@types/chrome": "^0.3.4",

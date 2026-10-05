@@ -100,6 +100,9 @@ WebRTC 直連（Tailscale）◄══════ 畫面 ═══════�
 - `npm run check`：只做型別檢查（含測試）。
 - `npm test`：位址與網段解析的單元測試（Node 直接跑 TypeScript，不用先編譯）。
 - `npm run e2e`：端對端測試。用本機的 Chrome 開一個全新設定檔（會跳出一個視窗），讓插件在同一個 Chrome 裡自己連自己，檢查畫面、滑鼠鍵盤、分頁列、結束連線。
+- `npm run pack`：編譯並打包成 `cctabgaze.zip`，同時檢查包內檔案（缺檔、多檔、manifest 或 html 指到不存在的檔案、編譯結果比原始碼舊，都會失敗）。
+- `npm run bump -- patch|minor|major`：調整版本號。版本號只存在 `extension/manifest.json`。
+- 發版：調整版本號後推上 `main`，CI 檢查通過且這個版本還沒發過，就建立 tag `v<version>` 與 GitHub Release（附 zip）。版本號沒動的 push 只做檢查。
 - 各執行環境之間的訊息格式都定義在 `src/protocol.ts`，欄位或 `type` 打錯會在編譯時報錯。viewer 經 DataChannel 送來的資料在 host 端的型別是 `unknown`，必須經過 `input()`、`tune()`、`doControl()` 的檢查才能用。
 
 ## 歷史

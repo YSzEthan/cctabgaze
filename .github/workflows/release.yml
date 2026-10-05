@@ -1,0 +1,67 @@
+# main 每次 push：型別檢查、單元測試、編譯、打包檢查。
+# 版本號只存在 extension/manifest.json（npm run bump 調整）。這個版本還沒有 tag 才發版：
+# tag 是 v<version>，zip 附在 GitHub Release；版本號沒動的 push 只做檢查，不發版。
+# 端對端測試（npm run e2e）要開有畫面的 Chrome，不在 CI 跑。
+name: build-release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write # 建立 tag 與 release
+
+concurrency:
+  group: release
+  cancel-in-progress: false # 不要中途取消正在發版的那次
+
+defaults:
+  run:
+    shell: bash # 明確指定才有 pipefail，管線中間失敗才會讓步驟失敗
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24 # 測試直接用 Node 跑 TypeScript，需要 22.18 以上
+          cache: npm
+
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: npm run build
+
+      - name: 版本號
+        id: ver
+        run: |
+          version=$(node -p "require('./extension/manifest.json').version")
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::manifest.json 的 version「${version}」不是 x.y.z"; exit 1; }
+          remote=$(git ls-remote --tags --refs origin 'v*')
+          tags=$(sed 's|.*refs/tags/v||' <<< "$remote")
+          if grep -qxF "$version" <<< "$tags"; then
+            echo "v${version} 已經發過，這次只做檢查"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            newest=$(printf '%s\n' $tags "$version" | sort -V | tail -1)
+            [ "$newest" = "$version" ] || { echo "::error::版本號 ${version} 比已發的 ${newest} 舊"; exit 1; }
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "tag=v${version}" >> "$GITHUB_OUTPUT"
+          echo "zip=cctabgaze-v${version}.zip" >> "$GITHUB_OUTPUT"
+
+      - name: 打包並檢查內容
+        run: scripts/pack.sh "${{ steps.ver.outputs.zip }}"
+
+      - name: 發版
+        if: steps.ver.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.ver.outputs.tag }}" "${{ steps.ver.outputs.zip }}" \
+            --target "$GITHUB_SHA" \
+            --title "${{ steps.ver.outputs.tag }}" \
+            --generate-notes

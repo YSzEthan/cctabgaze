@@ -1,4 +1,4 @@
-// 實驗：node proto-video/shot.ts
+// 實驗：bun proto-video/shot.ts
 // 擷取仍用 debugger 連續截圖（不需要點圖示、不需要啟動旗標），但不再一張張送圖片，
 // 而是把截圖餵進視訊編碼器、走 WebRTC 視訊軌。量這樣能到幾 fps、延遲多少、省多少頻寬。
 import { execSync } from 'node:child_process';

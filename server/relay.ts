@@ -1,5 +1,5 @@
 // 信令中繼：只有一個 host（新連線取代舊的）。viewer 的 offer 轉給 host，等 host 回 answer 再原路回傳。不解析 SDP。
-// 純邏輯、不依賴 Bun，方便用 node 直接測。
+// 純邏輯、不依賴 Bun 的 API，方便單獨測。
 export interface Sock { send(data: string): void; close(): void }
 export type Answer = { sdp: string } | { error: string };
 

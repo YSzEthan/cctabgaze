@@ -1,4 +1,4 @@
-// 畫面設定的驗證與合併：node test/tune.test.ts
+// 畫面設定的驗證與合併：bun test/tune.test.ts
 import { DEFAULT_TUNE, parseTune, TUNE_OPTIONS } from '../src/tune.ts';
 
 let fail = 0;

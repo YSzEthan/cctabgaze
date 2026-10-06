@@ -1,7 +1,7 @@
 # main 每次 push：型別檢查、單元測試、編譯、打包檢查。
-# 版本號只存在 extension/manifest.json（npm run bump 調整）。這個版本還沒有 tag 才發版：
+# 版本號只存在 extension/manifest.json（bun run bump 調整）。這個版本還沒有 tag 才發版：
 # tag 是 v<version>，zip 附在 GitHub Release；版本號沒動的 push 只做檢查，不發版。
-# 桌面 viewer 的端對端測試（npm run e2e）要開有畫面的 Chrome，不在 CI 跑；手機 PWA 的 e2e:signal 在 e2e.yml。
+# 桌面 viewer 的端對端測試（bun run e2e）要開有畫面的 Chrome，不在 CI 跑；手機 PWA 的 e2e:signal 在 e2e.yml。
 name: build-release
 
 on:
@@ -25,20 +25,19 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v5
+      - uses: oven-sh/setup-bun@v2
         with:
-          node-version: 24 # 測試直接用 Node 跑 TypeScript，需要 22.18 以上
-          cache: npm
+          bun-version-file: package.json
 
-      - run: npm ci
-      - run: npm run check
-      - run: npm test
-      - run: npm run build
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      - run: bun run test
+      - run: bun run build
 
       - name: 版本號
         id: ver
         run: |
-          version=$(node -p "require('./extension/manifest.json').version")
+          version=$(bun -p "require('./extension/manifest.json').version")
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::manifest.json 的 version「${version}」不是 x.y.z"; exit 1; }
           remote=$(git ls-remote --tags --refs origin 'v*')
           tags=$(sed 's|.*refs/tags/v||' <<< "$remote")

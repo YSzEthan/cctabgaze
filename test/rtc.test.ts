@@ -1,4 +1,4 @@
-// 位址與網段解析的測試：node test/rtc.test.ts（Node 直接執行 TypeScript，不需要先編譯）
+// 位址與網段解析的測試：bun test/rtc.test.ts（Bun 直接執行 TypeScript，不需要先編譯）
 import { checkPair, inNets, keepAllowed, netsOrDefault, parseCidr, parseIp, parseNets } from '../src/rtc.ts';
 
 let fail = 0;

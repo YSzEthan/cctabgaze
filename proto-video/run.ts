@@ -1,4 +1,4 @@
-// 實驗：node proto-video/run.ts
+// 實驗：bun proto-video/run.ts
 // 1. 權限：沒有人點圖示時 tabCapture 能不能開始（host 沒有人在場，這決定能不能用）
 // 2. 編碼：RTCRtpSender 列出的每個視訊編碼各跑一輪，量 fps、延遲、位元率、是否硬體編碼
 // 3. 情境：被擷取的分頁在背景、視窗最小化時還有沒有畫面

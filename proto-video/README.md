@@ -3,9 +3,9 @@
 實驗，不是產品的一部分。問題是：把現在的「debugger 連續截圖 + DataChannel」換成「`chrome.tabCapture` + WebRTC 視訊軌」，能不能用、會快多少。
 
 ```
-node proto-video/run.ts            # 全部跑一輪，約 3.5 分鐘，會跳出 Chrome 視窗；結果寫到 results.json
-ONLY=640034 node proto-video/run.ts          # 只跑 fmtp 含這段字的編碼
-LOCK=1 ONLY=640034 node proto-video/run.ts   # 另外留 15 秒讓你手動鎖定螢幕，量鎖定時的表現
+bun proto-video/run.ts            # 全部跑一輪，約 3.5 分鐘，會跳出 Chrome 視窗；結果寫到 results.json
+ONLY=640034 bun proto-video/run.ts          # 只跑 fmtp 含這段字的編碼
+LOCK=1 ONLY=640034 bun proto-video/run.ts   # 另外留 15 秒讓你手動鎖定螢幕，量鎖定時的表現
 ```
 
 ## 結論
@@ -33,7 +33,7 @@ LOCK=1 ONLY=640034 node proto-video/run.ts   # 另外留 15 秒讓你手動鎖�
 | H264 baseline `42001f` pm=0 | OpenH264 | 否 | 34.0 | 81／92 | 1796 | 29.3 |
 | H264 constrained baseline `42e01f` pm=0 | OpenH264 | 否 | 34.0 | 81／93 | 1814 | 29.2 |
 | H264 main `4d001f` pm=0 | OpenH264 | 否 | 32.2 | 83／94 | 1756 | 30.6 |
-| 對照：現行截圖（JPEG 品質 50，`npm run e2e`） | — | — | 約 22 | 15／21 | — | — |
+| 對照：現行截圖（JPEG 品質 50，`bun run e2e`） | — | — | 約 22 | 15／21 | — | — |
 
 pm 是 `packetization-mode`。「硬體」取自 WebRTC 統計的 `powerEfficientEncoder`。
 
@@ -72,8 +72,8 @@ pm 是 `packetization-mode`。「硬體」取自 WebRTC 統計的 `powerEfficien
 # 第二個實驗：截圖擷取 + 視訊編碼傳輸（`shot.ts`）
 
 ```
-node proto-video/shot.ts                 # 約 1.5 分鐘；結果寫到 results-shot.json
-ONLY='JPEG 90 → H264' node proto-video/shot.ts
+bun proto-video/shot.ts                 # 約 1.5 分鐘；結果寫到 results-shot.json
+ONLY='JPEG 90 → H264' bun proto-video/shot.ts
 ```
 
 擷取照舊用 debugger 的 `Page.captureScreenshot`（**不用點圖示、不用啟動旗標**），但不再一張張送圖片：背景程式把截圖丟給 offscreen，解碼成 `VideoFrame` 寫進 `MediaStreamTrackGenerator`，再走 WebRTC 視訊軌。

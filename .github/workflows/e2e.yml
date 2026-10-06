@@ -1,6 +1,6 @@
-# 手機 PWA 與信令伺服器的端對端測試（npm run e2e:signal）：起真的 Bun 伺服器、有畫面的 Chrome（xvfb）載入插件當 host，
+# 手機 PWA 與信令伺服器的端對端測試（bun run e2e:signal）：起真的 Bun 伺服器、有畫面的 Chrome（xvfb）載入插件當 host，
 # 用一般網頁（puppeteer 觸控模擬）當手機，驗證握手、視訊畫面、點擊、捲動、縮放、鍵盤、複製貼上、網址列、分頁列、畫面設定。
-# CI 沒有 Tailscale 位址，所以設 CG_E2E_ANY_NET=1 允許所有網段；位址檢查的 Tailscale 網段邏輯由單元測試（npm test）涵蓋。
+# CI 沒有 Tailscale 位址，所以設 CG_E2E_ANY_NET=1 允許所有網段；位址檢查的 Tailscale 網段邏輯由單元測試（bun run test）涵蓋。
 # 獨立的 workflow：發版（release.yml）不等它。穩定之後可以在 release.yml 加 needs。
 name: e2e
 
@@ -27,14 +27,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: npm
-
       - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
 
-      - run: npm ci
+      - run: bun install --frozen-lockfile
 
       - name: Chrome 與 xvfb
         run: |
@@ -47,4 +44,4 @@ jobs:
         env:
           CHROME: /usr/bin/google-chrome
           CG_E2E_ANY_NET: "1"
-        run: xvfb-run -a --server-args="-screen 0 1400x1000x24" npm run e2e:signal
+        run: xvfb-run -a --server-args="-screen 0 1400x1000x24" bun run e2e:signal

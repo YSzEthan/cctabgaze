@@ -1,4 +1,4 @@
-// 觸控手勢狀態機與幾何換算的測試：node test/gesture.test.ts
+// 觸控手勢狀態機與幾何換算的測試：bun test/gesture.test.ts
 import { chunk, diff, SENTINEL as S } from '../web/keys.ts';
 import { cancel, clampZoom, down, inside, move, newGesture, norm, pinch, releaseAll, snapZoom, up, wheelDelta, type Action } from '../web/gesture.ts';
 

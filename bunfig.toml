@@ -1,0 +1,3 @@
+# node_modules/.bin 裡 shebang 是 node 的執行檔（例如 tsc）也用 Bun 跑，機器上不需要裝 Node
+[run]
+bun = true

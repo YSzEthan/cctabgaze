@@ -1,6 +1,5 @@
 {
   "extends": "../tsconfig.json",
-  "compilerOptions": { "types": ["node", "chrome"], "noEmit": true, "allowImportingTsExtensions": true, "rootDir": ".." },
-  "include": ["../scripts", ".", "../proto-video/run.ts", "../proto-video/shot.ts"],
-  "exclude": ["../scripts/probe-server.ts"]
+  "compilerOptions": { "types": ["bun", "chrome"], "noEmit": true, "allowImportingTsExtensions": true, "rootDir": ".." },
+  "include": ["../scripts", ".", "../proto-video/run.ts", "../proto-video/shot.ts"]
 }

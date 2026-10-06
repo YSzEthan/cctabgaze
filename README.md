@@ -18,7 +18,7 @@ WebRTC 直連（Tailscale）◄══════ 畫面 ═══════�
 
 1. 兩台 Chrome 登入同一個 Google 帳號並開啟同步。
 2. 兩台都在 Tailscale 網路內（或在你另外設定的允許網段內，見「允許的網段」）。
-3. 編譯：`npm install && npm run build`（原始碼是 `src/` 的 TypeScript，編譯結果輸出到 `extension/`，需要 Node.js）。之後每次更新原始碼都要重新 build，並在 `chrome://extensions` 按重新載入。
+3. 編譯：`bun install && bun run build`（原始碼是 `src/` 的 TypeScript，編譯結果輸出到 `extension/`，需要 [Bun](https://bun.sh)）。之後每次更新原始碼都要重新 build，並在 `chrome://extensions` 按重新載入。
 4. `chrome://extensions` → 開啟開發人員模式 → 載入未封裝項目 → 選 `extension/`。兩台的插件 ID 都是 `offomejgoflopledfnhhkdldnhfejgjl`（manifest 固定了 `key`，`storage.sync` 依 ID 分區，ID 不同就不會互通）。
 5. 預設角色是 host，遠端那台不用設定。本機點插件圖示，在懸浮視窗按「Viewer」。
 
@@ -64,7 +64,7 @@ WebRTC 直連（Tailscale）◄══════ 畫面 ═══════�
 2. 用 Tailscale 提供 HTTPS：`tailscale serve --bg --https=8443 8790`（只有你的 tailnet 連得到；**不要用 `tailscale funnel`**，那會開到公網）。
 3. host 的插件懸浮視窗 →「信令伺服器」，填 `wss://<主機名>.<tailnet>.ts.net:8443/ws` 與 token。留空就不連線，原本的 Google 同步路徑照常運作。
 4. 手機（要先開 Tailscale）開 `https://<主機名>.<tailnet>.ts.net:8443/#t=<token>`：token 只在第一次要帶，之後存在手機的 localStorage（網址片段不會送到伺服器，讀完就從網址移除）。之後點「連線」。可以加到主畫面。token 錯誤會回到輸入欄。
-5. 手動測試：`CG_TOKEN=<至少 24 字元> bun server/index.ts`；`npm run e2e:signal` 會起伺服器並用一般網頁模擬手機連一次。
+5. 手動測試：`CG_TOKEN=<至少 24 字元> bun server/index.ts`；`bun run e2e:signal` 會起伺服器並用一般網頁模擬手機連一次。
 
 **手機手勢：** 輕點＝點擊，連點兩下＝雙擊；單指拖＝捲動頁面；長按後拖＝按住拖曳（選取文字、拖拉）；雙指＝縮放與平移（只在手機本機放大，不影響 host，縮回 1 倍會貼齊）。標題列「鍵盤」按鈕叫出手機輸入法（中文組字完成才送出）。限制：文字一律以「插入文字」送給 host，host 的頁面收不到一般字母的 keydown（只有 input 事件）；沒有 Esc、Tab、方向鍵；沒有慣性捲動。「複製」按鈕：先在 host 的頁面長按拖選文字，再按它，host 選取的文字會寫進手機的剪貼簿（密碼欄位讀不到）。「貼上」按鈕：把手機剪貼簿的文字送進 host 取得焦點的輸入框（先輕點 host 的輸入框，再按它；iOS 會跳出「貼上」確認；長文字自動分段）。
 
@@ -85,7 +85,7 @@ WebRTC 直連（Tailscale）◄══════ 畫面 ═══════�
 - **設定存在各機器本機，不同步**，所以兩台都要各設一次。
 - 過濾分兩層：SDP 裡不在網段內的 candidate 全部丟掉；連上後再讀實際選用的兩端位址，任一邊不在網段內（或讀不到）就關閉連線。
 - 位址必須是乾淨的 IP 字面值，主機名、`.local`、IPv4-mapped IPv6 一律拒絕。
-- 解析邏輯有測試：`npm test`。
+- 解析邏輯有測試：`bun run test`。
 
 ## 安全
 
@@ -126,16 +126,16 @@ WebRTC 直連（Tailscale）◄══════ 畫面 ═══════�
 
 原始碼在 `src/`（TypeScript，ES modules），`tsc` 逐檔編譯到 `extension/`，沒有打包工具。`extension/` 裡的 `.js` 是編譯結果，不進版本控制；`manifest.json` 與 `.html` 才是手寫的。
 
-- `npm run build`：編譯。`npm run watch`：存檔就編譯。
-- `npm run check`：只做型別檢查（插件、測試、伺服器、手機網頁）。
-- `npm test`：單元測試（位址與網段解析、信令中繼、手勢狀態機與鍵盤差異比對、畫面設定驗證；Node 直接跑 TypeScript，不用先編譯）。
-- `npm run e2e`：端對端測試。用本機的 Chrome 開一個全新設定檔（會跳出一個視窗），讓插件在同一個 Chrome 裡自己連自己，檢查畫面、滑鼠鍵盤、分頁列、結束連線。
-- `npm run e2e:signal`：手機 PWA 與信令伺服器的端對端測試，需要 [Bun](https://bun.sh)。起真的伺服器，插件當 host，用一般網頁（puppeteer 觸控模擬）當手機：握手、視訊畫面、點擊、捲動距離、雙指縮放、鍵盤、複製貼上、網址列、分頁列、畫面設定。機器沒有 Tailscale 位址（例如 CI）時設 `CG_E2E_ANY_NET=1`。
-- `npm run build:web`：把 `web/app.ts` 打包成 `web/app.js`（伺服器提供的手機網頁；`scripts/install-server.sh` 會自動執行）。
-- `npm run pack`：編譯並打包成 `cctabgaze.zip`，同時檢查包內檔案（缺檔、多檔、manifest 或 html 指到不存在的檔案、編譯結果比原始碼舊，都會失敗）。
-- `npm run bump -- patch|minor|major`：調整版本號。版本號只存在 `extension/manifest.json`。
+- `bun run build`：編譯。`bun run watch`：存檔就編譯。
+- `bun run check`：只做型別檢查（插件、測試、伺服器、手機網頁）。
+- `bun run test`：單元測試（位址與網段解析、信令中繼、手勢狀態機與鍵盤差異比對、畫面設定驗證；Bun 直接跑 TypeScript，不用先編譯）。注意不是 `bun test`，那是 Bun 內建的測試執行器，不會跑這個腳本。
+- `bun run e2e`：端對端測試。用本機的 Chrome 開一個全新設定檔（會跳出一個視窗），讓插件在同一個 Chrome 裡自己連自己，檢查畫面、滑鼠鍵盤、分頁列、結束連線。
+- `bun run e2e:signal`：手機 PWA 與信令伺服器的端對端測試。起真的伺服器，插件當 host，用一般網頁（puppeteer 觸控模擬）當手機：握手、視訊畫面、點擊、捲動距離、雙指縮放、鍵盤、複製貼上、網址列、分頁列、畫面設定。機器沒有 Tailscale 位址（例如 CI）時設 `CG_E2E_ANY_NET=1`。
+- `bun run build:web`：把 `web/app.ts` 打包成 `web/app.js`（伺服器提供的手機網頁；`scripts/install-server.sh` 會自動執行）。
+- `bun run pack`：編譯並打包成 `cctabgaze.zip`，同時檢查包內檔案（缺檔、多檔、manifest 或 html 指到不存在的檔案、編譯結果比原始碼舊，都會失敗）。
+- `bun run bump patch|minor|major`：調整版本號。版本號只存在 `extension/manifest.json`。
 - 發版：調整版本號後推上 `main`，CI 檢查通過且這個版本還沒發過，就建立 tag `v<version>` 與 GitHub Release（附 zip，內容只有插件；伺服器與手機網頁不在 zip 裡，從 repo 用 `scripts/install-server.sh` 安裝）。版本號沒動的 push 只做檢查。
-- CI：`release.yml` 做檢查、單元測試、編譯、打包、發版；`e2e.yml` 另外跑 `npm run e2e:signal`（xvfb 加 Chrome，不擋發版，穩定後可在 `release.yml` 加 `needs`）。`npm run e2e`（桌面 viewer 的端對端）要有畫面的 Chrome 與硬體編碼，只在本機跑。
+- CI：`release.yml` 做檢查、單元測試、編譯、打包、發版；`e2e.yml` 另外跑 `bun run e2e:signal`（xvfb 加 Chrome，不擋發版，穩定後可在 `release.yml` 加 `needs`）。`bun run e2e`（桌面 viewer 的端對端）要有畫面的 Chrome 與硬體編碼，只在本機跑。
 - 各執行環境之間的訊息格式都定義在 `src/protocol.ts`，欄位或 `type` 打錯會在編譯時報錯。viewer 經 DataChannel 送來的資料在 host 端的型別是 `unknown`，必須經過 `input()`、`tune()`、`doControl()` 的檢查才能用。
 
 ## 歷史

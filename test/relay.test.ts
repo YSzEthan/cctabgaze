@@ -1,4 +1,4 @@
-// 信令中繼邏輯的測試：node test/relay.test.ts
+// 信令中繼邏輯的測試：bun test/relay.test.ts
 import { Relay, type Answer, type Sock } from '../server/relay.ts';
 
 let fail = 0;

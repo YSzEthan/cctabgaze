@@ -1,4 +1,4 @@
-// 端對端測試（信令伺服器）：npm run e2e:signal。需要 bun。
+// 端對端測試（信令伺服器）：bun run e2e:signal。
 // 環境變數 CG_E2E_ANY_NET=1：允許所有網段（機器沒有 Tailscale 位址，例如 CI）；沒設的話用預設網段，會驗證 host 選中的是 Tailscale 位址。
 // 起一個真的信令伺服器，host 插件連上去；用一般網頁（不是插件）當「手機」：offer 裡只有 .local 位址，
 // 透過 POST /offer 取得 answer，確認 DataChannel 開啟、收得到 host 傳來的畫面訊息，且 host 的位址檢查走 lax 模式通過。

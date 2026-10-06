@@ -259,6 +259,9 @@ try {
   ok('網址框有焦點時點畫面 → 網址框失焦', await pwa.evaluate(() => document.activeElement?.id !== 'addr'));
 
   // 畫面設定：改成圖片 → PWA 顯示圖片；重新載入（重連）後仍是圖片（重連重送 tune）；選回視訊
+  // 先回到會持續重繪的頁面：?static 只畫一次，host 一直沒有新畫面可送，這段測試的是設定，不是靜止頁面
+  await typeUrl(site.url);
+  await until('host 回到動態頁面', async () => page.url() === site.url);
   await pwa.tap('#settings');
   ok('設定面板打開，傳輸選視訊時品質與格式停用', await pwa.evaluate(() => !(document.getElementById('prefs') as HTMLElement).hidden && (document.getElementById('tune-quality') as HTMLSelectElement).disabled));
   await pwa.select('#tune-mode', 'image');
@@ -280,6 +283,7 @@ try {
 } catch (e) {
   fail++;
   console.log('FAIL', e);
+  for (const p of await browser.pages()) if (p.url().startsWith(`http://127.0.0.1:${PORT}`)) console.log('手機網頁狀態：', await p.evaluate(() => ({ status: document.getElementById('status')?.textContent, msg: document.getElementById('msg')?.textContent, go: document.getElementById('go')?.textContent, goHidden: document.getElementById('go')?.hidden, tune: localStorage.getItem('cg_tune') })).catch(() => null));
   console.log(await hostLog().catch(() => ''));
 } finally {
   await browser.close();

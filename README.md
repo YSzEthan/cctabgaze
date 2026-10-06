@@ -60,7 +60,7 @@ WebRTC 直連（Tailscale）◄══════ 畫面 ═══════�
 
 **架設（伺服器那台，macOS）：**
 
-1. 安裝 [Bun](https://bun.sh)，執行 `scripts/install-server.sh`。它會產生 token（`~/.config/cctabgaze/token`，權限 600）、把伺服器複製到 `~/.config/cctabgaze/server`，並裝成 launchd 服務（預設 port 8790，開機自動啟動、掛了自動重啟）。改了 `server/` 要重跑一次。
+1. 安裝 [Bun](https://bun.sh)，執行 `scripts/install-server.sh`。它會**產生新的 token** 並在結束時印出來（存在 `~/.config/cctabgaze/token`，權限 600）、把伺服器與網頁複製到 `~/.config/cctabgaze/`，並裝成 launchd 服務（預設 port 8790，開機自動啟動、掛了自動重啟）。每次執行都會換 token（舊的失效，host 插件與每支手機都要換成新的）；只是更新程式、不想換 token：`scripts/install-server.sh --keep-token`。
 2. 用 Tailscale 提供 HTTPS：`tailscale serve --bg --https=8443 8790`（只有你的 tailnet 連得到；**不要用 `tailscale funnel`**，那會開到公網）。
 3. host 的插件懸浮視窗 →「信令伺服器」，填 `wss://<主機名>.<tailnet>.ts.net:8443/ws` 與 token。留空就不連線，原本的 Google 同步路徑照常運作。
 4. 手機（要先開 Tailscale）開 `https://<主機名>.<tailnet>.ts.net:8443/#t=<token>`：token 只在第一次要帶，之後存在手機的 localStorage（網址片段不會送到伺服器，讀完就從網址移除）。之後點「連線」。可以加到主畫面。token 錯誤會回到輸入欄。
@@ -75,7 +75,7 @@ WebRTC 直連（Tailscale）◄══════ 畫面 ═══════�
 **信任模型（和同步路徑不同）：** 同步路徑靠「同一個 Google 帳號加同一個 Tailscale 網路」；信令伺服器靠「token 加 Tailscale 網路」。
 
 - 伺服器等同完全信任：被入侵的伺服器能替換兩端 SDP 裡的 DTLS 指紋做中間人，看到畫面與所有輸入（含密碼）。只能跑在自己的機器上。
-- token 是唯一的認證（至少 24 字元，伺服器以常數時間比對）。知道 token 且在你的 tailnet 內的人，可以操作 host 登入中的網站（host 沒有操作限制）。外洩就刪掉 `~/.config/cctabgaze/token`、重跑安裝腳本，並更新 host 插件的設定。
+- token 是唯一的認證（至少 24 字元，伺服器以常數時間比對）。知道 token 且在你的 tailnet 內的人，可以操作 host 登入中的網站（host 沒有操作限制）。外洩就重跑安裝腳本（會換新 token 並印出來），並更新 host 插件與每支手機的設定。
 - 兩條路徑同時開著，攻擊面是兩者的聯集；不需要同步路徑的話，可以用 Tailscale ACL 限制誰能連伺服器。
 
 ## 允許的網段

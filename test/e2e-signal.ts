@@ -253,8 +253,8 @@ try {
 
   // 網址框有焦點時點畫面：網址框失焦
   await pwa.$eval('#addr', (a) => (a as HTMLInputElement).focus());
-  const vb = await vidBox();
-  await pwa.touchscreen.tap(vb.x + vb.w / 2, vb.y + vb.h / 2);
+  const sb = await pwa.$eval('#stage', (s) => { const r = s.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; }); // 舞台中心：不依賴視訊元素此刻有沒有佈局好
+  await pwa.touchscreen.tap(sb.x, sb.y);
   await sleep(400);
   ok('網址框有焦點時點畫面 → 網址框失焦', await pwa.evaluate(() => document.activeElement?.id !== 'addr'));
 

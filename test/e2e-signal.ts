@@ -280,6 +280,19 @@ try {
   await pwa.evaluate(() => localStorage.setItem('cg_token', 'wrong-token-wrong-token-wrong'));
   await pwa.reload();
   ok('token 錯誤時顯示輸入欄', !!(await until('輸入欄', () => pwa.evaluate(() => (document.getElementById('setup') as HTMLElement).hidden === false ? true : null), 10000)));
+
+  // 手動輸入 token：輸入框要能用觸控點進去、取得焦點、打字（舞台的 touchstart 擋掉預設行為時，這裡會點不進去）
+  const tb = await pwa.$eval('#token', (t) => { const r = t.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+  // 真實手機（iOS Safari、Android Chrome）上 touchstart 被取消就點不進輸入框，桌面 Chrome 的觸控模擬不會重現，所以直接驗成因：輸入框上的 touchstart 沒被取消、輸入框可選取文字
+  ok('token 輸入框上的 touchstart 沒有被取消（手機才點得進去）', await pwa.$eval('#token', (t) => { const ev = new TouchEvent('touchstart', { bubbles: true, cancelable: true }); t.dispatchEvent(ev); return !ev.defaultPrevented; }));
+  ok('token 輸入框可選取文字（iOS 祖先有 user-select:none 就不能輸入）', await pwa.$eval('#token', (t) => { const s = getComputedStyle(t) as CSSStyleDeclaration & { webkitUserSelect: string }; return s.userSelect === 'text' && s.webkitUserSelect === 'text'; }));
+  await pwa.touchscreen.tap(tb.x, tb.y);
+  ok('觸控點 token 輸入框 → 取得焦點', await pwa.evaluate(() => document.activeElement?.id === 'token'));
+  await pwa.keyboard.type(TOKEN);
+  ok('token 輸入框可以打字', await pwa.$eval('#token', (t) => (t as HTMLInputElement).value) === TOKEN);
+  await pwa.keyboard.press('Enter');
+  await until('輸入 token 後連上並顯示畫面', shownView, 20000);
+  ok('手動輸入 token → 連線成功', true);
 } catch (e) {
   fail++;
   console.log('FAIL', e);

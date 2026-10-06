@@ -54,7 +54,7 @@ export function initInput({ send, media }: InputDeps) {
   zoomEl.addEventListener('pointercancel', (e) => run(cancel(g, e.pointerId)));
   // 擋掉長按選單、整頁縮放；touchstart 不取消的話，鍵盤開著時點畫面會讓 textarea 失去焦點、鍵盤收起
   zoomEl.addEventListener('contextmenu', (e) => e.preventDefault());
-  stage.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
+  zoomEl.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false }); // 只在畫面上：放在整個舞台會連 token 輸入框都點不進去
   document.addEventListener('gesturestart', (e) => e.preventDefault());
 
   const release = () => run(releaseAll(g)); // 頁面隱藏、連線結束：按住中的要放開，否則 host 的滑鼠鍵會一直按著

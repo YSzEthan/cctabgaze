@@ -348,5 +348,8 @@ reqQ = reqQ.then(async () => {
   toOff({ type: 'reset' }, null);
 }).catch(() => {});
 
+// 第一次安裝（不含更新與重新載入）：開說明頁，告訴使用者接下來要做什麼
+chrome.runtime.onInstalled.addListener(({ reason }) => { if (reason === 'install') chrome.tabs.create({ url: 'welcome.html' }).catch(() => {}); });
+
 // 信令伺服器：收到 offer 就排進同一條請求佇列，和 sync 的請求走同一條路徑。t 用收到的時間，不用伺服器的（避免兩邊時鐘差造成誤判過期）
 startSignal((o, reply) => queueRequest({ id: o.id, from: 'signal', t: Date.now(), sdp: o.sdp }, { reply, lax: true }));

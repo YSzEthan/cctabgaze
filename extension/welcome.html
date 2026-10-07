@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>cctabgaze 安裝說明</title>
+<style>
+  :root { --bg:#fff; --fg:#222; --mute:#666; --code:#f2f2f2; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#222; --fg:#eee; --mute:#aaa; --code:#333; } }
+  body { max-width:640px; margin:0 auto; padding:32px 16px; background:var(--bg); color:var(--fg); font:15px/1.6 system-ui, sans-serif; }
+  h1 { margin:0 0 4px; font-size:22px; }
+  h2 { margin:28px 0 6px; font-size:16px; }
+  p, li { margin:6px 0; }
+  .mute { color:var(--mute); font-size:13px; }
+  code { padding:2px 6px; border-radius:4px; background:var(--code); font:13px ui-monospace, monospace; }
+  input { width:100%; box-sizing:border-box; margin-top:6px; padding:6px; font:13px ui-monospace, monospace; }
+  #sigrow { display:flex; gap:8px; align-items:center; margin-top:8px; }
+  #sigrow button { padding:6px 16px; font:inherit; cursor:pointer; }
+  #sigmsg { color:var(--mute); }
+</style>
+</head>
+<body>
+<h1>cctabgaze 已安裝</h1>
+<p class="mute">這一頁只在第一次安裝時出現。之後的設定都在插件圖示的懸浮視窗裡。</p>
+
+<h2>只在電腦之間旁觀</h2>
+<p>不用再做任何事。這台預設是 host；要旁觀的那台點插件圖示，按「Viewer」。</p>
+
+<h2>要讓手機連進來（只有 host 這台 Mac 要做）</h2>
+<ol>
+  <li>在專案資料夾執行 <code>bun run setup</code>。它會把信令伺服器裝成常駐服務，結束時印出 token。<span class="mute">插件不能替你執行本機的指令，所以這一步要自己來。</span></li>
+  <li>用 Tailscale 提供 HTTPS：<code>tailscale serve --bg --https=8443 8790</code></li>
+  <li>把伺服器位址與 token 填在下面，按儲存。</li>
+</ol>
+<input id="sigurl" type="text" placeholder="wss://<主機名>.<tailnet>.ts.net:8443/ws" spellcheck="false" autocomplete="off">
+<input id="sigtoken" type="password" placeholder="token" autocomplete="off">
+<div id="sigrow"><button id="sigsave">儲存</button><span id="sigmsg"></span></div>
+<p class="mute">設定存在這台，不同步。之後要改：插件圖示 →「信令伺服器（手機 PWA）」。</p>
+<script type="module" src="welcome.js"></script>
+</body>
+</html>

@@ -20,7 +20,7 @@ WebRTC 直連（Tailscale）◄══════ 畫面 ═══════�
 2. 兩台都在 Tailscale 網路內（或在你另外設定的允許網段內，見「允許的網段」）。
 3. 編譯：`bun install && bun run build`（原始碼是 `src/` 的 TypeScript，編譯結果輸出到 `extension/`，需要 [Bun](https://bun.sh)）。之後每次更新原始碼都要重新 build，並在 `chrome://extensions` 按重新載入。
 4. `chrome://extensions` → 開啟開發人員模式 → 載入未封裝項目 → 選 `extension/`。兩台的插件 ID 都是 `offomejgoflopledfnhhkdldnhfejgjl`（manifest 固定了 `key`，`storage.sync` 依 ID 分區，ID 不同就不會互通）。
-5. 預設角色是 host，遠端那台不用設定。本機點插件圖示，在懸浮視窗按「Viewer」。
+5. 第一次載入會自動開啟安裝說明頁（只出現這一次）。預設角色是 host，遠端那台不用設定。本機點插件圖示，在懸浮視窗按「Viewer」。
 
 ## 使用
 
@@ -60,9 +60,9 @@ WebRTC 直連（Tailscale）◄══════ 畫面 ═══════�
 
 **架設（伺服器那台，macOS）：**
 
-1. 安裝 [Bun](https://bun.sh)，執行 `scripts/install-server.sh`。它會**產生新的 token** 並在結束時印出來（存在 `~/.config/cctabgaze/token`，權限 600）、把伺服器與網頁複製到 `~/.config/cctabgaze/`，並裝成 launchd 服務（預設 port 8790，開機自動啟動、掛了自動重啟）。每次執行都會換 token（舊的失效，host 插件與每支手機都要換成新的）；只是更新程式、不想換 token：`scripts/install-server.sh --keep-token`。
+1. 安裝 [Bun](https://bun.sh)，執行 `bun run setup`：裝依賴、編譯插件，再執行 `scripts/install-server.sh`（參數原樣傳過去，例如 `bun run setup --keep-token`；只想裝伺服器就直接執行後者）。插件不能執行本機的指令，所以沒辦法在載入插件時自動做這一步。`install-server.sh` 會**產生新的 token** 並在結束時印出來（存在 `~/.config/cctabgaze/token`，權限 600）、把伺服器與網頁複製到 `~/.config/cctabgaze/`，並裝成 launchd 服務（預設 port 8790，開機自動啟動、掛了自動重啟）。每次執行都會換 token（舊的失效，host 插件與每支手機都要換成新的）；只是更新程式、不想換 token：`scripts/install-server.sh --keep-token`。
 2. 用 Tailscale 提供 HTTPS：`tailscale serve --bg --https=8443 8790`（只有你的 tailnet 連得到；**不要用 `tailscale funnel`**，那會開到公網）。
-3. host 的插件懸浮視窗 →「信令伺服器」，填 `wss://<主機名>.<tailnet>.ts.net:8443/ws` 與 token。留空就不連線，原本的 Google 同步路徑照常運作。
+3. host 的插件懸浮視窗 →「信令伺服器」（或第一次安裝時自動開啟的說明頁），填 `wss://<主機名>.<tailnet>.ts.net:8443/ws` 與 token。留空就不連線，原本的 Google 同步路徑照常運作。
 4. 手機（要先開 Tailscale）開 `https://<主機名>.<tailnet>.ts.net:8443/#t=<token>`：token 只在第一次要帶，之後存在手機的 localStorage（網址片段不會送到伺服器，讀完就從網址移除）。之後點「連線」。可以加到主畫面。token 錯誤會回到輸入欄。
 5. 手動測試：`CG_TOKEN=<至少 24 字元> bun server/index.ts`；`bun run e2e:signal` 會起伺服器並用一般網頁模擬手機連一次。
 
@@ -133,6 +133,7 @@ WebRTC 直連（Tailscale）◄══════ 畫面 ═══════�
 - `bun run e2e:signal`：手機 PWA 與信令伺服器的端對端測試。起真的伺服器，插件當 host，用一般網頁（puppeteer 觸控模擬）當手機：握手、視訊畫面、點擊、捲動距離、雙指縮放、鍵盤、複製貼上、網址列、分頁列、畫面設定。機器沒有 Tailscale 位址（例如 CI）時設 `CG_E2E_ANY_NET=1`。
 - `bun run build:web`：把 `web/app.ts` 打包成 `web/app.js`（伺服器提供的手機網頁；`scripts/install-server.sh` 會自動執行）。
 - `bun run pack`：編譯並打包成 `cctabgaze.zip`，同時檢查包內檔案（缺檔、多檔、manifest 或 html 指到不存在的檔案、編譯結果比原始碼舊，都會失敗）。
+- `bun run setup [port] [--keep-token]`：host 那台 Mac 的一鍵安裝（`bun install`、`bun run build`、`scripts/install-server.sh`）。
 - `bun run bump patch|minor|major`：調整版本號。版本號只存在 `extension/manifest.json`。
 - 發版：調整版本號後推上 `main`，CI 檢查通過且這個版本還沒發過，就建立 tag `v<version>` 與 GitHub Release（附 zip，內容只有插件；伺服器與手機網頁不在 zip 裡，從 repo 用 `scripts/install-server.sh` 安裝）。版本號沒動的 push 只做檢查。
 - CI：`release.yml` 做檢查、單元測試、編譯、打包、發版；`e2e.yml` 另外跑 `bun run e2e:signal`（xvfb 加 Chrome，不擋發版，穩定後可在 `release.yml` 加 `needs`）。`bun run e2e`（桌面 viewer 的端對端）要有畫面的 Chrome 與硬體編碼，只在本機跑。

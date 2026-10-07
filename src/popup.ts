@@ -1,5 +1,5 @@
 import { DEFAULT_NETS, parseNets } from './rtc.ts';
-import { parseSignalUrl, type SignalConfig } from './signal.ts';
+import { saveSignal, type SignalConfig } from './signal.ts';
 import { DEFAULT_TUNE, TUNE_OPTIONS } from './tune.ts';
 import type { Tune } from './protocol.ts';
 
@@ -73,11 +73,4 @@ for (const el of [fm, fq, fr, ff]) el.onchange = () => chrome.storage.local.set(
 // ---- 信令伺服器：只有 host 會用；存在這台的 storage.local，不同步 ----
 const sigUrl = $<HTMLInputElement>('sigurl'), sigToken = $<HTMLInputElement>('sigtoken');
 chrome.storage.local.get<{ signal: Partial<SignalConfig> }>('signal').then(({ signal }) => { sigUrl.value = signal?.url ?? ''; sigToken.value = signal?.token ?? ''; });
-$('sigsave').onclick = async () => {
-  const url = sigUrl.value.trim(), token = sigToken.value.trim();
-  if (!url && !token) { await chrome.storage.local.remove('signal'); $('sigmsg').textContent = '已清除，不連線'; return; }
-  if (!parseSignalUrl(url)) { $('sigmsg').textContent = '位址要以 ws:// 或 wss:// 開頭，未儲存'; return; }
-  if (token.length < 24) { $('sigmsg').textContent = 'token 至少 24 字元，未儲存'; return; }
-  await chrome.storage.local.set({ signal: { url, token } });
-  $('sigmsg').textContent = '已儲存，馬上連線';
-};
+$('sigsave').onclick = async () => { $('sigmsg').textContent = await saveSignal(sigUrl.value.trim(), sigToken.value.trim()); };

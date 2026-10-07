@@ -12,7 +12,8 @@
     "e2e": "tsc && bun test/e2e.ts",
     "e2e:signal": "tsc && bun test/e2e-signal.ts",
     "bump": "bun scripts/bump.ts",
-    "pack": "tsc && scripts/pack.sh cctabgaze.zip"
+    "pack": "tsc && scripts/pack.sh cctabgaze.zip",
+    "setup": "scripts/setup.sh"
   },
   "devDependencies": {
     "@types/bun": "^1.4.2",

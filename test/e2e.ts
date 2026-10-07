@@ -47,6 +47,22 @@ const shown = (viewer: Page) => viewer.evaluate(() => {
 const readEv = (page: Page) => page.evaluate(() => (window as any).__ev as string[]);
 
 try {
+  // 第一次安裝會自動開說明頁；在上面填的信令設定要通過驗證才存進 storage.local
+  const welcome = await until('安裝說明頁開啟', async () => (await browser.pages()).find((p) => p.url().endsWith('/welcome.html')));
+  const saveSig = async (url: string, token: string) => {
+    await welcome.evaluate((u, t) => {
+      (document.getElementById('sigurl') as HTMLInputElement).value = u; (document.getElementById('sigtoken') as HTMLInputElement).value = t;
+      document.getElementById('sigmsg')!.textContent = ''; document.getElementById('sigsave')!.click();
+    }, url, token);
+    await until('說明頁顯示儲存結果', () => welcome.evaluate(() => document.getElementById('sigmsg')!.textContent));
+    return sw.evaluate(async () => (await chrome.storage.local.get('signal')).signal as { url: string; token: string } | undefined);
+  };
+  ok('安裝後自動開啟說明頁', true);
+  ok('說明頁：token 太短不儲存', (await saveSig('ws://127.0.0.1:1/ws', 'short')) === undefined);
+  ok('說明頁：位址與 token 合法 → 存進 storage.local', (await saveSig('ws://127.0.0.1:1/ws', 'x'.repeat(24)))?.token === 'x'.repeat(24));
+  await sw.evaluate(() => chrome.storage.local.remove('signal')); // 不讓後面的測試去連不存在的伺服器
+  await welcome.close();
+
   const page = await browser.newPage();
   page.on('pageerror', (e) => errors.push(String(e)));
   await page.goto(site.url);

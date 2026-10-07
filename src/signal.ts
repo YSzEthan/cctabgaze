@@ -11,6 +11,15 @@ export const parseSignalUrl = (s: unknown): string | null => {
   try { const u = new URL(String(s)); return u.protocol === 'ws:' || u.protocol === 'wss:' ? u.href : null; } catch { return null; }
 };
 
+// 驗證並儲存設定（懸浮視窗與安裝說明頁共用），回傳要顯示給使用者的訊息
+export async function saveSignal(url: string, token: string): Promise<string> {
+  if (!url && !token) { await chrome.storage.local.remove('signal'); return '已清除，不連線'; }
+  if (!parseSignalUrl(url)) return '位址要以 ws:// 或 wss:// 開頭，未儲存';
+  if (token.length < 24) return 'token 至少 24 字元，未儲存';
+  await chrome.storage.local.set({ signal: { url, token } });
+  return '已儲存，馬上連線';
+}
+
 export function startSignal(onOffer: (o: SignalOffer, reply: Reply) => void) {
   let ws: WebSocket | null = null, cfg: SignalConfig | null = null, beat: ReturnType<typeof setInterval> | undefined, retry: ReturnType<typeof setTimeout> | undefined;
 

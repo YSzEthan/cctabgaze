@@ -48,5 +48,9 @@ if [ "$NEW" = 1 ]; then
 else
   echo "token 沿用原本的（${CONF}/token）："
 fi
-cat "$CONF/token"
-echo "手機第一次開：https://<主機名>.<tailnet>.ts.net:8443/#t=$(cat "$CONF/token")"
+TOKEN=$(cat "$CONF/token"); echo "$TOKEN"
+# 從 tailscale 取本機的 DNS 名稱，取不到就留佔位字樣
+HOST=$(tailscale status --json 2>/dev/null | sed -n 's/.*"DNSName": *"\([^"]*\)\.".*/\1/p' | head -1)
+HOST=${HOST:-"<主機名>.<tailnet>.ts.net"}
+echo "host 插件「信令伺服器」填：wss://${HOST}:8443/ws"
+echo "手機第一次開：https://${HOST}:8443/#t=${TOKEN}"
